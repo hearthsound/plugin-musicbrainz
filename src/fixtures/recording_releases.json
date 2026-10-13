@@ -1,0 +1,35 @@
+{
+  "id": "b061ba14-6b3b-4739-a043-dd4685357af4",
+  "title": "Wildlife Analysis",
+  "length": 77426,
+  "isrcs": [
+    "GBBPW9800010"
+  ],
+  "releases": [
+    {
+      "id": "52295596-c761-4871-bd4e-1821862e4288",
+      "title": "Boc Maxima",
+      "date": "1996",
+      "status": "Official",
+      "release-group": {
+        "id": "1b066b55-5144-3302-aa37-3bbd289729e0",
+        "primary-type": "Album",
+        "secondary-types": [
+          "Demo"
+        ]
+      }
+    },
+    {
+      "id": "aa9286ad-59a3-4bd5-9cc0-545ae394720f",
+      "title": "Music Has the Right to Children",
+      "date": "1998-04-20",
+      "status": "Official",
+      "release-group": {
+        "id": "17d74d52-c92b-3b8d-9f87-218ab2d1c4a0",
+        "primary-type": "Album"
+      }
+    }
+  ],
+  "first-release-date": "1996",
+  "video": false
+}

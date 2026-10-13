@@ -1,0 +1,24 @@
+{
+  "release-count": 15,
+  "release-offset": 0,
+  "releases": [
+    {
+      "id": "148a35c6-e53c-3790-a1ab-f6699bea96ad",
+      "title": "Music Has the Right to Children",
+      "date": "1998-09-22",
+      "status": "Official"
+    },
+    {
+      "id": "1a8207d9-75fa-44d7-9a83-04801b0619f3",
+      "title": "Music Has the Right to Children",
+      "date": "1998-04-20",
+      "status": "Official"
+    },
+    {
+      "id": "2f018bb8-f299-3eb6-8cd4-ccb68bce8ebd",
+      "title": "Music Has the Right to Children",
+      "date": "2002-02-13",
+      "status": "Official"
+    }
+  ]
+}

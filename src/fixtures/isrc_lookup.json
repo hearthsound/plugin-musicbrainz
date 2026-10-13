@@ -1,0 +1,21 @@
+{
+  "isrc": "GBBPW9800010",
+  "recordings": [
+    {
+      "id": "b061ba14-6b3b-4739-a043-dd4685357af4",
+      "title": "Wildlife Analysis",
+      "length": 77426,
+      "artist-credit": [
+        {
+          "name": "Boards of Canada",
+          "artist": {
+            "id": "69158f97-4c07-4c4e-baf8-4e4ab1ed666e",
+            "name": "Boards of Canada"
+          }
+        }
+      ],
+      "first-release-date": "1996",
+      "video": false
+    }
+  ]
+}

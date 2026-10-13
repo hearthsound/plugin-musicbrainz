@@ -1,0 +1,107 @@
+{
+  "count": 18,
+  "offset": 0,
+  "recordings": [
+    {
+      "id": "1a8f24d1-19eb-4988-96b7-b82ead82b0a3",
+      "title": "Roygbiv",
+      "length": 139253,
+      "score": 100,
+      "artist-credit": [
+        {
+          "name": "Boards of Canada",
+          "artist": {
+            "id": "69158f97-4c07-4c4e-baf8-4e4ab1ed666e",
+            "name": "Boards of Canada"
+          }
+        }
+      ],
+      "releases": [
+        {
+          "id": "ebcf935f-f49c-42e3-84e4-1007201bdca8",
+          "title": "The Cornerstone Player 044",
+          "date": "2003",
+          "status": "Promotion",
+          "track-count": 67,
+          "release-group": {
+            "id": "406e886a-9cb3-4f02-b0fe-52328a3208ef",
+            "primary-type": "Album",
+            "secondary-types": [
+              "Compilation"
+            ]
+          }
+        }
+      ],
+      "first-release-date": "2003"
+    },
+    {
+      "id": "cdd58e5b-4fbf-4553-a166-3a5cb5295947",
+      "title": "roygbiv",
+      "score": 100,
+      "artist-credit": [
+        {
+          "name": "Boards of Canada",
+          "artist": {
+            "id": "69158f97-4c07-4c4e-baf8-4e4ab1ed666e",
+            "name": "Boards of Canada"
+          }
+        }
+      ],
+      "releases": [
+        {
+          "id": "765a6b13-9740-496f-85d3-f8e4d2ef5e18",
+          "title": "For.Spring.Splicing",
+          "status": "Bootleg",
+          "track-count": 17,
+          "release-group": {
+            "id": "0d00faf1-1d3b-436b-9c8b-a0d6c79f6425",
+            "primary-type": "Album",
+            "secondary-types": [
+              "Compilation"
+            ]
+          }
+        }
+      ],
+      "first-release-date": "2009-06-08"
+    },
+    {
+      "id": "463a92dd-4eed-4bb9-b9e6-1be0d5acf5df",
+      "title": "roygbiv",
+      "length": 86341,
+      "score": 87,
+      "artist-credit": [
+        {
+          "name": "rezco",
+          "artist": {
+            "id": "96f46aff-8534-4b33-9af3-3ad3c0faba94",
+            "name": "rezco"
+          }
+        },
+        {
+          "name": "Boards of Canada",
+          "artist": {
+            "id": "69158f97-4c07-4c4e-baf8-4e4ab1ed666e",
+            "name": "Boards of Canada"
+          }
+        }
+      ],
+      "releases": [
+        {
+          "id": "c9056cbf-a956-4e0e-8071-85982a967b10",
+          "title": "Surge Compilation Vol. 1",
+          "date": "2020-04-06",
+          "status": "Official",
+          "track-count": 82,
+          "release-group": {
+            "id": "9bbe8b1d-0800-434c-895f-80b9e25ef975",
+            "primary-type": "Album",
+            "secondary-types": [
+              "Compilation"
+            ]
+          }
+        }
+      ],
+      "first-release-date": "2020-04-06"
+    }
+  ]
+}

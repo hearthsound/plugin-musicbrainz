@@ -1,0 +1,159 @@
+{
+  "id": "ebcf935f-f49c-42e3-84e4-1007201bdca8",
+  "title": "The Cornerstone Player 044",
+  "date": "2003",
+  "status": "Promotion",
+  "barcode": "",
+  "artist-credit": [
+    {
+      "name": "Various Artists",
+      "artist": {
+        "id": "89ad4ac3-39f7-470e-963a-56509c546377",
+        "name": "Various Artists"
+      }
+    }
+  ],
+  "release-group": {
+    "id": "406e886a-9cb3-4f02-b0fe-52328a3208ef",
+    "primary-type": "Album",
+    "secondary-types": [
+      "Compilation"
+    ]
+  },
+  "media": [
+    {
+      "position": 1,
+      "format": "CD",
+      "track-count": 25,
+      "tracks": [
+        {
+          "id": "6563e326-553e-4cce-ab64-0eddd335c080",
+          "title": "I Believe I Can Fly",
+          "number": "1",
+          "position": 1,
+          "length": 203386,
+          "artist-credit": [
+            {
+              "name": "Me First and the Gimme Gimmes",
+              "artist": {
+                "id": "9478e346-7c52-4780-9555-3d1577f0b905",
+                "name": "Me First and the Gimme Gimmes"
+              }
+            }
+          ],
+          "recording": {
+            "id": "4791fa2a-fce0-46ce-9586-4cf09c7505c1",
+            "title": "I Believe I Can Fly",
+            "length": 203386,
+            "artist-credit": [
+              {
+                "name": "Me First and the Gimme Gimmes",
+                "artist": {
+                  "id": "9478e346-7c52-4780-9555-3d1577f0b905",
+                  "name": "Me First and the Gimme Gimmes"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "01607dd0-ea0f-4ad1-b555-73a736901cf2",
+          "title": "Invite Only",
+          "number": "2",
+          "position": 2,
+          "length": 58773,
+          "artist-credit": [
+            {
+              "name": "[unknown]",
+              "artist": {
+                "id": "125ec42a-7229-4250-afc5-e057484327fe",
+                "name": "[unknown]"
+              }
+            }
+          ],
+          "recording": {
+            "id": "6fdb87c3-88bb-4081-a232-d2a18fc8f097",
+            "title": "Invite Only",
+            "length": 58773,
+            "artist-credit": [
+              {
+                "name": "[unknown]",
+                "artist": {
+                  "id": "125ec42a-7229-4250-afc5-e057484327fe",
+                  "name": "[unknown]"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "position": 2,
+      "format": "CD",
+      "track-count": 20,
+      "tracks": [
+        {
+          "id": "d6b8cb42-68b5-4cda-806b-1dda0c5aefba",
+          "title": "To All the Critics (Preamble)",
+          "number": "1",
+          "position": 1,
+          "length": 49706,
+          "artist-credit": [
+            {
+              "name": "Dirk Diggler",
+              "artist": {
+                "id": "89d9275b-b7d9-4e7d-a249-984225c14968",
+                "name": "Dirk Diggler"
+              }
+            }
+          ],
+          "recording": {
+            "id": "1f0ce4ab-e00a-4a8d-9d23-00c963897198",
+            "title": "To All the Critics (Preamble)",
+            "length": 49706,
+            "artist-credit": [
+              {
+                "name": "Dirk Diggler",
+                "artist": {
+                  "id": "89d9275b-b7d9-4e7d-a249-984225c14968",
+                  "name": "Dirk Diggler"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "0cada910-53cc-465e-b00c-203d0cf08aee",
+          "title": "Venim and Wonder",
+          "number": "2",
+          "position": 2,
+          "length": 147906,
+          "artist-credit": [
+            {
+              "name": "John Beltran",
+              "artist": {
+                "id": "7c89d2d2-7016-4c5b-bf38-f4b8cf2a370a",
+                "name": "John Beltran"
+              }
+            }
+          ],
+          "recording": {
+            "id": "dc5f52f2-1e62-4858-8423-43467aa2ca40",
+            "title": "Venim and Wonder",
+            "length": 147906,
+            "artist-credit": [
+              {
+                "name": "John Beltran",
+                "artist": {
+                  "id": "7c89d2d2-7016-4c5b-bf38-f4b8cf2a370a",
+                  "name": "John Beltran"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
