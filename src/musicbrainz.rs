@@ -35,6 +35,13 @@ pub struct ArtistCredit {
     pub artist: Option<Artist>,
 }
 
+/// A genre as the web service embeds it in an entity.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Genre {
+    /// Genre name, for example `electronic` or `idm`.
+    pub name: String,
+}
+
 /// A release group as the web service embeds it in a release.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReleaseGroup {
@@ -43,6 +50,10 @@ pub struct ReleaseGroup {
     /// Primary type of the release group, for example `Album` or `Single`.
     #[serde(rename = "primary-type")]
     pub primary_type: Option<String>,
+    /// Genres the release group is tagged with, which stand in for a release
+    /// that carries none of its own.
+    #[serde(default)]
+    pub genres: Vec<Genre>,
 }
 
 /// A release as the web service embeds it in a recording.
@@ -59,8 +70,6 @@ pub struct ReleaseStub {
     /// Release date, as complete as the web service knows it (`1998-08-20`,
     /// `1998-08` or `1998`).
     pub date: Option<String>,
-    /// Release status, for example `Official` or `Bootleg`.
-    pub status: Option<String>,
     /// Number of tracks on the release.
     #[serde(rename = "track-count")]
     pub track_count: Option<u32>,
@@ -149,4 +158,79 @@ pub struct RecordingSearch {
     /// The matching recordings, best match first.
     #[serde(default)]
     pub recordings: Vec<Recording>,
+}
+
+/// One track of a release medium.
+///
+/// The web service omits `title` when the track is named after its recording,
+/// and the recording itself is only embedded when the request asked for
+/// `inc=recordings`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Track {
+    /// MusicBrainz id of the track, which identifies it on this release.
+    pub id: String,
+    /// Track title as it appears on the release.
+    pub title: Option<String>,
+    /// Position of the track on its medium, starting at 1.
+    pub position: Option<u32>,
+    /// Length of the track on this medium, in milliseconds.
+    pub length: Option<u32>,
+    /// The artists credited on the track.
+    #[serde(default, rename = "artist-credit")]
+    pub artist_credit: Vec<ArtistCredit>,
+    /// The recording the track plays.
+    pub recording: Option<Recording>,
+}
+
+/// One medium of a release, for example a CD or one side of a record.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Medium {
+    /// Position of the medium in the release, starting at 1.
+    pub position: Option<u32>,
+    /// The medium's tracks.
+    #[serde(default)]
+    pub tracks: Vec<Track>,
+}
+
+/// A release as a release lookup returns it.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Release {
+    /// MusicBrainz release id.
+    pub id: String,
+    /// Release title.
+    pub title: String,
+    /// Release date, as complete as the web service knows it.
+    pub date: Option<String>,
+    /// Barcode of the release, which the web service leaves empty when it does
+    /// not know one.
+    pub barcode: Option<String>,
+    /// The artists credited on the release.
+    #[serde(default, rename = "artist-credit")]
+    pub artist_credit: Vec<ArtistCredit>,
+    /// Genres the release itself is tagged with.
+    #[serde(default)]
+    pub genres: Vec<Genre>,
+    /// The release group this release belongs to.
+    #[serde(rename = "release-group")]
+    pub release_group: Option<ReleaseGroup>,
+    /// The media of the release, in order.
+    #[serde(default)]
+    pub media: Vec<Medium>,
+}
+
+/// The response of a release browse.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReleaseBrowse {
+    /// The releases of the browsed release group, in the order the web service
+    /// chose.
+    #[serde(default)]
+    pub releases: Vec<ReleaseStub>,
+}
+
+/// The response of the genre listing the health probe reads.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GenrePage {
+    /// The genres the web service returned; the probe only asks for one.
+    #[serde(default)]
+    pub genres: Vec<Genre>,
 }
