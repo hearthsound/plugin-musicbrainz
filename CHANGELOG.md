@@ -18,3 +18,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The metadata interface over the MusicBrainz web service: recording resolution
   from an ISRC or a Lucene search, release materialization from a release or
   release group id, a health probe, and the manifest that declares them.
+- A CI workflow that formats, lints, tests, builds, checks and packs the
+  plugin, and uploads the archive.
