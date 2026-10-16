@@ -286,6 +286,45 @@ pub struct ReleaseBrowse {
     pub releases: Vec<ReleaseStub>,
 }
 
+/// The response of a release search.
+///
+/// A release search result is a [`ReleaseStub`] with a relevance the plugin
+/// does not read: a release is looked up by its barcode, which either matches
+/// one release or none.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReleaseSearch {
+    /// Total number of releases the index matched, which may exceed the number
+    /// returned.
+    pub count: Option<u32>,
+    /// The matching releases, best match first.
+    #[serde(default)]
+    pub releases: Vec<ReleaseStub>,
+}
+
+/// A release group as a release group search returns it.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReleaseGroupStub {
+    /// MusicBrainz release group id.
+    pub id: String,
+    /// Release group title.
+    pub title: String,
+    /// Relevance the search index reported for this release group, in
+    /// `0..=100`.
+    #[serde(default, deserialize_with = "deserialize_score")]
+    pub score: Option<f32>,
+}
+
+/// The response of a release group search.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReleaseGroupSearch {
+    /// Total number of release groups the index matched, which may exceed the
+    /// number returned.
+    pub count: Option<u32>,
+    /// The matching release groups, best match first.
+    #[serde(default, rename = "release-groups")]
+    pub release_groups: Vec<ReleaseGroupStub>,
+}
+
 /// The response of the genre listing the health probe reads.
 #[derive(Debug, Clone, Deserialize)]
 pub struct GenrePage {

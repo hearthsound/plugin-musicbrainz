@@ -1,0 +1,25 @@
+{
+  "created": "2026-10-16T00:00:00.000Z",
+  "count": 2,
+  "offset": 0,
+  "releases": [
+    {
+      "id": "6360f948-17d1-4135-a580-34dc200930d8",
+      "title": "Music Has the Right to Children",
+      "status": "Official",
+      "barcode": "0602547508228",
+      "score": 100,
+      "release-group": {
+        "id": "17d74d52-c92b-3b8d-9f87-218ab2d1c4a0",
+        "primary-type": "Album"
+      }
+    },
+    {
+      "id": "b0c4b1a2-6c85-4a4a-b0ab-8f5b4a1d2c3e",
+      "title": "Music Has the Right to Children",
+      "status": "Official",
+      "barcode": "0602547508228",
+      "score": 87
+    }
+  ]
+}

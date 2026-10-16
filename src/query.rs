@@ -1,10 +1,11 @@
-//! Lucene query construction for the MusicBrainz recording index.
+//! Lucene query construction for the MusicBrainz search indexes.
 //!
 //! The web service takes the `query` parameter of a search request as a Lucene
-//! query, so a title or an artist name pasted into it unescaped could change
-//! the query rather than constrain it. This module builds the query for one
-//! recording hint and escapes every value that goes into it. It is pure: it
-//! never touches the network, so it is unit-tested on the host target.
+//! query, so a title, an artist name or a barcode pasted into it unescaped
+//! could change the query rather than constrain it. This module builds the
+//! query for one recording hint, for the release of a barcode and for the
+//! release group of an album, and escapes every value that goes into it. It is
+//! pure: it never touches the network, so it is unit-tested on the host target.
 
 /// Number of recordings a search asks for.
 ///
@@ -134,6 +135,81 @@ pub fn recording_query(
     Some(terms.join(" AND "))
 }
 
+/// Builds the Lucene query for the release that carries a barcode.
+///
+/// # Parameters
+///
+/// - `barcode`: the barcode of the release, as the caller supplied it.
+///
+/// # Returns
+///
+/// The query text, or `None` when the barcode is empty or only whitespace and
+/// there is nothing to search for. The caller must URL-encode the result with
+/// [`encode_component`](crate::url::encode_component) before putting it in a
+/// request.
+///
+/// # Example
+///
+/// ```text
+/// barcode_query("602547508228") -> Some("barcode:602547508228")
+/// barcode_query("  ")           -> None
+/// ```
+pub fn barcode_query(barcode: &str) -> Option<String> {
+    let barcode = barcode.trim();
+    if barcode.is_empty() {
+        return None;
+    }
+
+    Some(format!("barcode:{}", escape_lucene(barcode)))
+}
+
+/// Builds the Lucene query for the release group of an album.
+///
+/// The query is the release group's title and, when the caller knows one, the
+/// first non-empty artist of the album: a release group's `artist` term
+/// matches the credit of the release group itself.
+///
+/// # Parameters
+///
+/// - `title`: the album title.
+/// - `artists`: the album's artists, in order; only the first non-empty one is
+///   used.
+///
+/// # Returns
+///
+/// The query text, or `None` when the title is empty or only whitespace. The
+/// caller must URL-encode the result with
+/// [`encode_component`](crate::url::encode_component) before putting it in a
+/// request.
+///
+/// # Example
+///
+/// ```text
+/// release_group_query("Music Has the Right to Children", &[])
+///   -> "releasegroup:\"Music Has the Right to Children\""
+/// release_group_query("Geogaddi", &["Boards of Canada".into()])
+///   -> "releasegroup:\"Geogaddi\" AND artist:\"Boards of Canada\""
+/// ```
+pub fn release_group_query(title: &str, artists: &[String]) -> Option<String> {
+    let title = title.trim();
+    if title.is_empty() {
+        return None;
+    }
+
+    let mut terms = vec![format!("releasegroup:\"{}\"", escape_lucene(title))];
+
+    if let Some(artist) = artists
+        .iter()
+        .map(String::as_str)
+        .map(str::trim)
+        .find(|a| !a.is_empty())
+    {
+        terms.push(format!("artist:\"{}\"", escape_lucene(artist)));
+    }
+
+    Some(terms.join(" AND "))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,6 +314,55 @@ mod tests {
             )
             .unwrap(),
             "recording:\"Rock \\(Remix\\)\" AND artist:\"AC\\/DC\" AND release:\"Live\\! \\[2024\\]\" AND dur:[195000 TO 205000]"
+        );
+    }
+
+    #[test]
+    fn a_barcode_becomes_a_barcode_term() {
+        assert_eq!(
+            barcode_query(" 602547508228 ").unwrap(),
+            "barcode:602547508228"
+        );
+        assert_eq!(
+            barcode_query("06025475-08228").unwrap(),
+            "barcode:06025475\\-08228"
+        );
+    }
+
+    #[test]
+    fn an_empty_barcode_is_not_searchable() {
+        assert_eq!(barcode_query(""), None);
+        assert_eq!(barcode_query("   "), None);
+    }
+
+    #[test]
+    fn a_release_group_title_alone_is_a_valid_query() {
+        assert_eq!(
+            release_group_query("Geogaddi", &[]).unwrap(),
+            "releasegroup:\"Geogaddi\""
+        );
+        assert_eq!(
+            release_group_query("  Music Has the Right to Children  ", &[]).unwrap(),
+            "releasegroup:\"Music Has the Right to Children\""
+        );
+    }
+
+    #[test]
+    fn the_first_non_empty_artist_joins_the_release_group_query() {
+        let artists = vec![String::new(), " Boards of Canada ".to_string()];
+
+        assert_eq!(
+            release_group_query("Geogaddi", &artists).unwrap(),
+            "releasegroup:\"Geogaddi\" AND artist:\"Boards of Canada\""
+        );
+    }
+
+    #[test]
+    fn an_empty_release_group_title_is_not_searchable() {
+        assert_eq!(release_group_query("", &[]), None);
+        assert_eq!(
+            release_group_query("  ", &["Boards of Canada".to_string()]),
+            None
         );
     }
 }

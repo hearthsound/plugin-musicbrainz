@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an artist by an `mb-artist` id or by an exact-name search of the artist
   index, and reports the id with the artist's web links from the url relations
   MusicBrainz records.
+- Cover art through the artwork interface: `find-artwork` names the Cover Art
+  Archive renditions of an album's front cover, from a release or release group
+  id the server holds or from a barcode or a title it looks up, and caches the
+  lookup result in the instance's key-value store.
 
 ### Changed
 

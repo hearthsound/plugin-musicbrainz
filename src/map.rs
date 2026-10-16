@@ -11,14 +11,14 @@
 //! MusicBrainz recording, release, release group or artist id, and a release's
 //! UPC - are reported in their own [`IdPair`] namespaces.
 
-use hearthsound_plugin::metadata_provider::exports::hearthsound::plugin::metadata::{
+use hearthsound_plugin::metadata_artwork_provider::exports::hearthsound::plugin::metadata::{
     ArtistInfo, ArtistLink, RecordingMatch, ReleaseSummary,
 };
 use hearthsound_plugin::types::{
-    Album, AlbumRef, ArtistCredit as ProviderArtistCredit, IdPair, Track as ProviderTrack,
+    Album, AlbumRef, ArtistCredit as ProviderArtistCredit, IdPair, Image, Track as ProviderTrack,
 };
 
-use crate::musicbrainz;
+use crate::{musicbrainz, url};
 
 /// Id namespace of an International Standard Recording Code.
 pub const NS_ISRC: &str = "isrc";
@@ -534,6 +534,84 @@ pub fn artist_info(artist: &musicbrainz::ArtistLookup) -> ArtistInfo {
     }
 }
 
+/// Widths of the Cover Art Archive renditions of a front cover.
+///
+/// The archive serves each of them from the same path with the width as its
+/// suffix, and a server that wants a cover picks the smallest rendition that
+/// covers the place it draws it in.
+const COVER_WIDTHS: [u32; 3] = [250, 500, 1200];
+
+/// Builds the Cover Art Archive renditions of a release's front cover.
+///
+/// # Parameters
+///
+/// - `base_url`: base URL of the Cover Art Archive, with or without a trailing
+///   slash.
+/// - `mbid`: MusicBrainz release id.
+///
+/// # Returns
+///
+/// One image per width of [`COVER_WIDTHS`], narrowest first.
+///
+/// # Example
+///
+/// ```text
+/// release_images("https://coverartarchive.org/", "6360f948-17d1-4135-a580-34dc200930d8")
+///   -> [Image { url: "https://coverartarchive.org/release/6360f948-.../front-250", width: Some(250), height: None }, ...]
+/// ```
+pub fn release_images(base_url: &str, mbid: &str) -> Vec<Image> {
+    cover_images(base_url, &format!("release/{mbid}"))
+}
+
+/// Builds the Cover Art Archive renditions of a release group's front cover.
+///
+/// The archive serves a release group's cover at a path of its own, which is
+/// the cover of the group's releases rather than of one pressing.
+///
+/// # Parameters
+///
+/// - `base_url`: base URL of the Cover Art Archive, with or without a trailing
+///   slash.
+/// - `mbid`: MusicBrainz release group id.
+///
+/// # Returns
+///
+/// One image per width of [`COVER_WIDTHS`], narrowest first.
+///
+/// # Example
+///
+/// ```text
+/// release_group_images("https://coverartarchive.org/", "17d74d52-c92b-3b8d-9f87-218ab2d1c4a0")
+///   -> [Image { url: "https://coverartarchive.org/release-group/17d74d52-.../front-250", width: Some(250), height: None }, ...]
+/// ```
+pub fn release_group_images(base_url: &str, mbid: &str) -> Vec<Image> {
+    cover_images(base_url, &format!("release-group/{mbid}"))
+}
+
+/// Builds the renditions of one Cover Art Archive front cover.
+///
+/// # Parameters
+///
+/// - `base_url`: base URL of the Cover Art Archive.
+/// - `path`: the archive path of the cover, without a leading or trailing
+///   slash.
+///
+/// # Returns
+///
+/// One image per width of [`COVER_WIDTHS`], narrowest first. The archive
+/// reports no height for a rendition it builds on demand, so the height is
+/// left unknown.
+fn cover_images(base_url: &str, path: &str) -> Vec<Image> {
+    COVER_WIDTHS
+        .iter()
+        .map(|width| Image {
+            url: url::endpoint(base_url, &format!("{path}/front-{width}")),
+            width: Some(*width),
+            height: None,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -931,5 +1009,79 @@ mod tests {
         assert_eq!(link_kind("bandcamp"), Some("bandcamp"));
         assert_eq!(link_kind("youtube"), None);
         assert_eq!(link_kind(""), None);
+    }
+
+    /// Renders images as url and width pairs, because the generated `Image` is
+    /// not comparable.
+    fn images(images: &[Image]) -> Vec<(&str, Option<u32>)> {
+        images
+            .iter()
+            .map(|image| (image.url.as_str(), image.width))
+            .collect()
+    }
+
+    #[test]
+    fn a_release_cover_has_one_rendition_per_width() {
+        let built = release_images(
+            "https://coverartarchive.org/",
+            "6360f948-17d1-4135-a580-34dc200930d8",
+        );
+
+        assert_eq!(
+            images(&built),
+            vec![
+                (
+                    "https://coverartarchive.org/release/6360f948-17d1-4135-a580-34dc200930d8/front-250",
+                    Some(250)
+                ),
+                (
+                    "https://coverartarchive.org/release/6360f948-17d1-4135-a580-34dc200930d8/front-500",
+                    Some(500)
+                ),
+                (
+                    "https://coverartarchive.org/release/6360f948-17d1-4135-a580-34dc200930d8/front-1200",
+                    Some(1200)
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_release_group_cover_is_served_under_its_own_path() {
+        let built = release_group_images(
+            "https://coverartarchive.org",
+            "17d74d52-c92b-3b8d-9f87-218ab2d1c4a0",
+        );
+
+        assert_eq!(
+            images(&built),
+            vec![
+                (
+                    "https://coverartarchive.org/release-group/17d74d52-c92b-3b8d-9f87-218ab2d1c4a0/front-250",
+                    Some(250)
+                ),
+                (
+                    "https://coverartarchive.org/release-group/17d74d52-c92b-3b8d-9f87-218ab2d1c4a0/front-500",
+                    Some(500)
+                ),
+                (
+                    "https://coverartarchive.org/release-group/17d74d52-c92b-3b8d-9f87-218ab2d1c4a0/front-1200",
+                    Some(1200)
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_cover_base_url_of_a_mirror_is_used_as_it_is() {
+        let built = release_images(
+            " https://archive.example/cover-art// ",
+            "6360f948-17d1-4135-a580-34dc200930d8",
+        );
+
+        assert_eq!(
+            images(&built)[0].0,
+            "https://archive.example/cover-art/release/6360f948-17d1-4135-a580-34dc200930d8/front-250"
+        );
     }
 }

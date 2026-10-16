@@ -6,7 +6,7 @@
 //! lookup and the search, which are tested here directly, and the translation,
 //! which is tested in [`crate::map`].
 
-use hearthsound_plugin::metadata_provider::exports::hearthsound::plugin::metadata::{
+use hearthsound_plugin::metadata_artwork_provider::exports::hearthsound::plugin::metadata::{
     ArtistInfo, ArtistInfoRequest, RecordingHint, RecordingMatch,
 };
 use hearthsound_plugin::types::{Album, IdPair, ProviderError};

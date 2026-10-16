@@ -1,16 +1,19 @@
-# Hearthsound MusicBrainz metadata plugin
+# Hearthsound MusicBrainz plugin
 
-A [Hearthsound](https://github.com/hearthsound) metadata plugin backed by the
-[MusicBrainz web service](https://musicbrainz.org/doc/MusicBrainz_API). It
-compiles to a WebAssembly component that implements the `metadata` provider
-interface, so a Hearthsound server can resolve a recording hint (title,
-artists, album, duration, ISRC) to scored MusicBrainz recordings, materialize a
-release, with its track list, from MusicBrainz ids, and read an artist's web
-links from its MusicBrainz id or name.
+A [Hearthsound](https://github.com/hearthsound) metadata and artwork plugin
+backed by the
+[MusicBrainz web service](https://musicbrainz.org/doc/MusicBrainz_API) and the
+[Cover Art Archive](https://coverartarchive.org). It compiles to a WebAssembly
+component that implements the `metadata` and `artwork` provider interfaces, so
+a Hearthsound server can resolve a recording hint (title, artists, album,
+duration, ISRC) to scored MusicBrainz recordings, materialize a release, with
+its track list, from MusicBrainz ids, read an artist's web links from its
+MusicBrainz id or name, and name the renditions of an album's front cover.
 
 The plugin needs no MusicBrainz account and no API key: every endpoint it calls
-is part of the public web service. It does not fetch artwork yet; the images of
-a materialized release are empty until the artwork capability arrives.
+is part of the public web service, and the covers it names are part of the
+Cover Art Archive. It never fetches image bytes itself, because the server
+reads an image through the instance that named it.
 
 ## Requirements
 
@@ -24,7 +27,8 @@ cargo build --release --locked --target wasm32-wasip2
 ```
 
 The component lands at
-`target/wasm32-wasip2/release/hearthsound_plugin_musicbrainz.wasm`.
+`target/wasm32-wasip2/release/hearthsound_plugin_musicbrainz.wasm`. It exports
+the `metadata` and `artwork` provider interfaces.
 
 ## Check and pack
 
@@ -40,8 +44,8 @@ Then validate the manifest and the component:
 hsplugin check
 ```
 
-It prints `ok: app.hearthsound.musicbrainz 0.1.0 (provides metadata)` on
-success.
+It prints `ok: app.hearthsound.musicbrainz 0.1.0 (provides metadata, artwork)`
+on success.
 
 Finally, build the archive you install on a server:
 
@@ -54,8 +58,8 @@ component.
 
 ## Tests
 
-The query building, scoring and mapping logic runs on the host target, so its
-unit tests need no WebAssembly toolchain and no network:
+The query building, scoring, mapping and artwork lookup logic runs on the host
+target, so its unit tests need no WebAssembly toolchain and no network:
 
 ```console
 cargo test
@@ -66,14 +70,18 @@ cargo test
 | Instance setting | Default | Meaning |
 |---|---|---|
 | `baseUrl` | `https://musicbrainz.org/ws/2/` | Base URL of the MusicBrainz web service. Point it at a mirror to keep traffic off `musicbrainz.org`. |
+| `artworkBaseUrl` | `https://coverartarchive.org/` | Base URL of the Cover Art Archive. Point it at a mirror to keep traffic off `coverartarchive.org`. |
 
 A base URL that does not end in a slash is normalized to one, so the endpoint
-paths the plugin appends always land on the web service root.
+paths the plugin appends always land on the service root. The manifest grants
+the plugin the `musicbrainz.org` and Cover Art Archive hosts plus whichever
+hosts the two settings name.
 
 The instance requests a `host-http` rate limit of one request per second with a
-burst of one, which is the average MusicBrainz publishes. The limit is enforced
-by the host, because exceeding the average answers `503` to every caller of the
-IP, not only to the plugin (https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting).
+burst of one, which is the average MusicBrainz publishes and covers the Cover
+Art Archive requests too. The limit is enforced by the host, because exceeding
+the average answers `503` to every caller of the IP, not only to the plugin
+(https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting).
 
 ## Behavior
 
@@ -109,7 +117,8 @@ release id and title, its artists, release date, the primary type of its release
 group, its barcode as the UPC, its genres (or the release group's when the
 release has none), and every track of every medium with the medium position as
 the disc number, the track position as the track number, the recording id and
-the track's first ISRC. Images are empty: this plugin does not read artwork yet.
+the track's first ISRC. The album's images are empty, because the server asks
+the artwork layer for a cover instead.
 
 `get-artist-info` reads an artist's web pages. A request that carries an
 `mb-artist` id is looked up directly through `GET /artist/{mbid}?inc=url-rels`;
@@ -123,6 +132,21 @@ artist. The answer carries the `mb-artist` id and one link per mapped relation
 biography is empty, because MusicBrainz publishes none. An artist that neither
 an id nor a qualifying hit names is answered with no information rather than an
 error.
+
+`find-artwork` names the Cover Art Archive renditions of an album's front cover,
+narrowest first: 250, 500 and 1200 pixels wide. The renditions follow what the
+subject carries. An `mb-release` id has its cover at
+`/release/<mbid>/front-<width>` and an `mb-release-group` id at
+`/release-group/<mbid>/front-<width>`. A `upc` goes through
+`GET /release?query=barcode:<upc>` and the release of the first result is used.
+Anything else goes through
+`GET /release-group?query=releasegroup:"<title>" AND artist:"<first artist>"`,
+where the first hit the index scored at least 90 wins, so a similarly named
+album is not mistaken for the one the subject names. No lookup that finds
+nothing is an error: it is an empty list, and so is every artist subject,
+because the Cover Art Archive holds no portraits. A lookup result is cached in
+the instance's key-value store for 30 days, and a lookup that found nothing for
+one day, so an album grid costs a request only the first time it is drawn.
 
 Errors follow the provider contract: `404` is a not-found, `429` and the `503`
 MusicBrainz answers an exceeded request rate with are rate-limited (with the
@@ -151,9 +175,10 @@ and every other failure is unavailable or internal.
 | Path | Contents |
 |---|---|
 | `Cargo.toml` | Crate metadata and the SDK dependency. |
-| `src/lib.rs` | The plugin: configuration, lifecycle and the metadata interface. |
+| `src/lib.rs` | The plugin: configuration, lifecycle, and the metadata and artwork interfaces. |
 | `src/api.rs` | The HTTP transport and MusicBrainz's error statuses. |
 | `src/metadata.rs` | One function per metadata operation, over the API endpoints. |
+| `src/artwork.rs` | The Cover Art Archive lookups and the cache of their results. |
 | `src/musicbrainz.rs` | Serde types for the web service responses. |
 | `src/map.rs` | MusicBrainz records to provider records. |
 | `src/query.rs` | Lucene query construction and escaping. |

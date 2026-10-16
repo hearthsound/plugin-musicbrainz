@@ -6,6 +6,9 @@
 /// Base URL of the MusicBrainz web service.
 pub const DEFAULT_BASE_URL: &str = "https://musicbrainz.org/ws/2/";
 
+/// Base URL of the Cover Art Archive.
+pub const DEFAULT_ARTWORK_BASE_URL: &str = "https://coverartarchive.org/";
+
 /// Returns whether `value` is an absolute `http` or `https` URL.
 ///
 /// The check is deliberately structural rather than a full URL parse: it
