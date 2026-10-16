@@ -4,14 +4,17 @@
 //! The plugin needs no account and no key, because every endpoint it uses is
 //! part of MusicBrainz's public web service. It implements `lifecycle`
 //! (configuration validation and a health probe) and `metadata` (recording
-//! resolution and release materialization), and nothing else.
+//! resolution, release materialization and artist information), and nothing
+//! else.
 //!
 //! `resolve-recording` answers the caller's identity resolution: an ISRC, when
 //! the hint carries a usable one, is looked up directly, and anything else goes
 //! through a Lucene search of the recording index. Either path returns scored
 //! matches, best first, with the MusicBrainz recording id and any ISRC in their
 //! `ids`. `get-release` materializes an album from a release id, or from the
-//! earliest official release of a release group.
+//! earliest official release of a release group. `get-artist-info` reads an
+//! artist's web links from its url relations, naming the artist by id or
+//! searching the artist index for its name.
 //!
 //! The only instance setting is `baseUrl`, which defaults to the public web
 //! service and can be pointed at a mirror.
@@ -160,16 +163,21 @@ impl MetadataGuest for MusicBrainzMetadata {
         metadata::get_release(&base_url()?, &ids)
     }
 
-    /// Answers that the plugin holds no information on the requested artist.
+    /// Looks the requested artist up in the MusicBrainz artist index.
     ///
     /// # Parameters
     ///
-    /// - `request`: the artist the caller wants information on.
+    /// - `request`: the artist the caller wants information on, named by an
+    ///   `mb-artist` id or by name.
     ///
     /// # Returns
     ///
-    /// `None`, which tells the server the plugin knows nothing about this
-    /// artist.
+    /// The artist's `mb-artist` id and its web links, or `None` when neither
+    /// the id nor the name found an artist.
+    ///
+    /// # Errors
+    ///
+    /// Returns the provider error of the request that failed.
     fn get_artist_info(request: ArtistInfoRequest) -> Result<Option<ArtistInfo>, ProviderError> {
         hearthsound_plugin::debug!(
             "get-artist-info for {:?} with {} ids",
@@ -177,7 +185,7 @@ impl MetadataGuest for MusicBrainzMetadata {
             request.ids.len()
         );
 
-        Ok(None)
+        metadata::artist_info(&base_url()?, &request)
     }
 }
 

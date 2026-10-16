@@ -12,7 +12,7 @@
 //! UPC - are reported in their own [`IdPair`] namespaces.
 
 use hearthsound_plugin::metadata_provider::exports::hearthsound::plugin::metadata::{
-    RecordingMatch, ReleaseSummary,
+    ArtistInfo, ArtistLink, RecordingMatch, ReleaseSummary,
 };
 use hearthsound_plugin::types::{
     Album, AlbumRef, ArtistCredit as ProviderArtistCredit, IdPair, Track as ProviderTrack,
@@ -410,12 +410,12 @@ fn narrow(value: u32) -> Option<u16> {
 
 /// Returns a copy of an optional string that is neither absent nor empty.
 ///
-/// The web service serializes a value it does not know as an empty string
-/// rather than omitting it, which for a record field means "no value".
+/// The web service serializes a value it does not know as an empty string,
+/// which the provider records carry as an absent value instead.
 ///
 /// # Parameters
 ///
-/// - `value`: the value as the web service returned it.
+/// - `value`: the value the web service returned, if any.
 ///
 /// # Returns
 ///
@@ -430,6 +430,108 @@ fn narrow(value: u32) -> Option<u16> {
 /// ```
 fn non_empty(value: Option<&str>) -> Option<String> {
     value.filter(|value| !value.is_empty()).map(str::to_string)
+}
+
+/// Returns the link kind of a MusicBrainz url relation type.
+///
+/// The web service names a link type in its own vocabulary; the server knows
+/// the kinds documented on the `artist-link` record. Every type this plugin
+/// does not map - `youtube`, `social network`, `image` and the rest - is
+/// dropped rather than reported under an invented kind.
+///
+/// # Parameters
+///
+/// - `kind`: the relation type as the web service named it.
+///
+/// # Returns
+///
+/// The link kind, or `None` when the relation type has no kind here.
+///
+/// # Example
+///
+/// ```text
+/// link_kind("official homepage") -> Some("homepage")
+/// link_kind("last.fm")           -> Some("lastfm")
+/// link_kind("youtube")           -> None
+/// ```
+pub fn link_kind(kind: &str) -> Option<&'static str> {
+    match kind {
+        "official homepage" => Some("homepage"),
+        "wikipedia" => Some("wikipedia"),
+        "wikidata" => Some("wikidata"),
+        "last.fm" => Some("lastfm"),
+        "discogs" => Some("discogs"),
+        "allmusic" => Some("allmusic"),
+        "bandcamp" => Some("bandcamp"),
+        _ => None,
+    }
+}
+
+/// Converts an artist's relations into provider links.
+///
+/// Every relation whose type is one of the kinds [`link_kind`] maps and whose
+/// target is a non-empty URL becomes one link, in the order the web service
+/// returned the relations, so an artist's links read in the order the web
+/// service chose.
+///
+/// # Parameters
+///
+/// - `relations`: the relations of an artist lookup.
+///
+/// # Returns
+///
+/// The links, one per mapped relation.
+///
+/// # Example
+///
+/// ```text
+/// artist_links(&[ArtistRelation { kind: "wikipedia".to_string(), url: Some(RelationUrl { resource: "https://en.wikipedia.org/wiki/Northlight".to_string() }) }])
+///   -> [ArtistLink { kind: "wikipedia", url: "https://en.wikipedia.org/wiki/Northlight" }]
+/// ```
+pub fn artist_links(relations: &[musicbrainz::ArtistRelation]) -> Vec<ArtistLink> {
+    relations
+        .iter()
+        .filter_map(|relation| {
+            let kind = link_kind(&relation.kind)?;
+            let resource = relation.url.as_ref()?.resource.as_str();
+
+            if resource.is_empty() {
+                None
+            } else {
+                Some(ArtistLink {
+                    kind: kind.to_string(),
+                    url: resource.to_string(),
+                })
+            }
+        })
+        .collect()
+}
+
+/// Converts an artist lookup into artist information.
+///
+/// The web service has no biography of its own, so the information carries the
+/// artist's `mb-artist` id and the links of its url relations and nothing else.
+///
+/// # Parameters
+///
+/// - `artist`: the artist as an artist lookup returned it.
+///
+/// # Returns
+///
+/// The artist information.
+///
+/// # Example
+///
+/// ```text
+/// artist_info(&ArtistLookup { id: "d1f2e3a4-...".to_string(), name: "Northlight".to_string(), relations: vec![] })
+///   -> ArtistInfo { ids: [("mb-artist", "d1f2e3a4-...")], biography: None, links: [] }
+/// ```
+pub fn artist_info(artist: &musicbrainz::ArtistLookup) -> ArtistInfo {
+    ArtistInfo {
+        ids: vec![id_pair(NS_ARTIST, &artist.id)],
+        biography: None,
+        links: artist_links(&artist.relations),
+    }
 }
 
 #[cfg(test)]
@@ -737,5 +839,97 @@ mod tests {
         assert!(track.ids.is_empty());
         assert_eq!(track.artists[0].name, "Boards of Canada");
         assert!(track.artists[0].ids.is_empty());
+    }
+
+    fn artist_lookup() -> musicbrainz::ArtistLookup {
+        serde_json::from_str(include_str!("fixtures/artist_lookup.json")).unwrap()
+    }
+
+    /// Renders links as tuples, because the generated `ArtistLink` is not
+    /// comparable.
+    fn links(links: &[ArtistLink]) -> Vec<(&str, &str)> {
+        links
+            .iter()
+            .map(|link| (link.kind.as_str(), link.url.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn maps_an_artist_lookup_into_artist_information() {
+        let artist = artist_lookup();
+        let info = artist_info(&artist);
+
+        assert_eq!(
+            id_pairs(&info.ids),
+            vec![("mb-artist", "d1f2e3a4-5b6c-4d7e-8f90-1a2b3c4d5e6f")]
+        );
+        assert_eq!(info.biography, None);
+        assert_eq!(
+            links(&info.links),
+            vec![
+                ("homepage", "https://northlight.example/"),
+                ("wikipedia", "https://en.wikipedia.org/wiki/Northlight"),
+                ("wikidata", "https://www.wikidata.org/wiki/Q1000000"),
+                ("lastfm", "https://www.last.fm/music/Northlight"),
+                ("discogs", "https://www.discogs.com/artist/1000000"),
+                (
+                    "allmusic",
+                    "https://www.allmusic.com/artist/northlight-mn0000000000"
+                ),
+                ("bandcamp", "https://northlight.bandcamp.com/"),
+            ]
+        );
+    }
+
+    #[test]
+    fn relation_types_without_a_link_kind_are_dropped() {
+        // The fixture's artist also has a social network page, an image and a
+        // band membership; none of the three is a link the server knows.
+        let artist = artist_lookup();
+
+        assert_eq!(artist.relations.len(), 10);
+        assert_eq!(link_kind("social network"), None);
+        assert_eq!(link_kind("image"), None);
+        assert_eq!(link_kind("member of band"), None);
+    }
+
+    #[test]
+    fn a_relation_without_a_usable_url_carries_no_link() {
+        let relations = vec![
+            musicbrainz::ArtistRelation {
+                kind: "official homepage".to_string(),
+                url: None,
+            },
+            musicbrainz::ArtistRelation {
+                kind: "wikipedia".to_string(),
+                url: Some(musicbrainz::RelationUrl {
+                    resource: String::new(),
+                }),
+            },
+            musicbrainz::ArtistRelation {
+                kind: "last.fm".to_string(),
+                url: Some(musicbrainz::RelationUrl {
+                    resource: "https://www.last.fm/music/Northlight".to_string(),
+                }),
+            },
+        ];
+
+        assert_eq!(
+            links(&artist_links(&relations)),
+            vec![("lastfm", "https://www.last.fm/music/Northlight")]
+        );
+    }
+
+    #[test]
+    fn every_mapped_relation_type_has_a_link_kind() {
+        assert_eq!(link_kind("official homepage"), Some("homepage"));
+        assert_eq!(link_kind("wikipedia"), Some("wikipedia"));
+        assert_eq!(link_kind("wikidata"), Some("wikidata"));
+        assert_eq!(link_kind("last.fm"), Some("lastfm"));
+        assert_eq!(link_kind("discogs"), Some("discogs"));
+        assert_eq!(link_kind("allmusic"), Some("allmusic"));
+        assert_eq!(link_kind("bandcamp"), Some("bandcamp"));
+        assert_eq!(link_kind("youtube"), None);
+        assert_eq!(link_kind(""), None);
     }
 }

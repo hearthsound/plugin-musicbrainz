@@ -7,7 +7,7 @@
 //! which is tested in [`crate::map`].
 
 use hearthsound_plugin::metadata_provider::exports::hearthsound::plugin::metadata::{
-    RecordingHint, RecordingMatch,
+    ArtistInfo, ArtistInfoRequest, RecordingHint, RecordingMatch,
 };
 use hearthsound_plugin::types::{Album, IdPair, ProviderError};
 
@@ -18,6 +18,20 @@ use crate::{api, map, musicbrainz, query, score, url};
 /// It is the web service's maximum page size and comfortably above the number
 /// of official releases a release group has, so one page resolves the group.
 const RELEASE_LIMIT: u32 = 100;
+
+/// Number of artists an artist search asks for.
+///
+/// A search for an artist name returns homages, cover bands and namesakes
+/// before or after the artist itself, and the web service orders them by
+/// relevance, so the first few hits are the only ones worth reading.
+const ARTIST_SEARCH_LIMIT: u32 = 5;
+
+/// Relevance an artist search hit must reach to name the requested artist.
+///
+/// The index reports `100` for an exact name match and lower values for a hit
+/// it only considers similar, so a hit below this is a different artist with a
+/// name close to the one the caller asked for.
+const ARTIST_SEARCH_SCORE: f32 = 90.0;
 
 /// Resolves a recording hint to scored MusicBrainz recordings.
 ///
@@ -112,6 +126,48 @@ pub(crate) fn get_release(base_url: &str, ids: &[IdPair]) -> Result<Album, Provi
     );
 
     Ok(map::album(&release))
+}
+
+/// Returns information on an artist.
+///
+/// The caller's `mb-artist` id, when it has one, names the artist directly.
+/// Otherwise the caller's name is searched for, and only a hit that spells the
+/// name the same way, ignoring case, and that the index considers a confident
+/// match of it, is used; anything less is a namesake rather than the artist the
+/// caller asked about.
+///
+/// # Parameters
+///
+/// - `base_url`: base URL of the web service.
+/// - `request`: the artist the caller wants information on.
+///
+/// # Returns
+///
+/// The artist's information, or `None` when the id or the name found no
+/// artist. The web service has no biography, so the information carries the
+/// `mb-artist` id and the artist's url relations.
+///
+/// # Errors
+///
+/// Returns the provider error of the request that failed. A name no search hit
+/// answers is `None`, not an error.
+pub(crate) fn artist_info(
+    base_url: &str,
+    request: &ArtistInfoRequest,
+) -> Result<Option<ArtistInfo>, ProviderError> {
+    let Some(mbid) = artist_mbid(base_url, request)? else {
+        hearthsound_plugin::debug!("no MusicBrainz artist matches {:?}", request.name);
+        return Ok(None);
+    };
+
+    let artist: musicbrainz::ArtistLookup = api::get_json(base_url, &artist_path(&mbid))?;
+    hearthsound_plugin::debug!(
+        "read artist {} with {} relations",
+        artist.id,
+        artist.relations.len()
+    );
+
+    Ok(Some(map::artist_info(&artist)))
 }
 
 /// Probes the web service with the smallest request it serves.
@@ -354,6 +410,118 @@ fn sorted(mut matches: Vec<RecordingMatch>) -> Vec<RecordingMatch> {
     matches
 }
 
+/// Resolves the MusicBrainz id of the artist a request names.
+///
+/// # Parameters
+///
+/// - `base_url`: base URL of the web service.
+/// - `request`: the artist the caller wants information on.
+///
+/// # Returns
+///
+/// The id of the caller's `mb-artist` pair when it carries one, the id of the
+/// search hit [`searched_artist`] picks when it does not, and `None` when a
+/// request without an id carries no name to search for or no hit qualifies.
+///
+/// # Errors
+///
+/// Returns the provider error of the search request.
+fn artist_mbid(
+    base_url: &str,
+    request: &ArtistInfoRequest,
+) -> Result<Option<String>, ProviderError> {
+    if let Some(pair) = request
+        .ids
+        .iter()
+        .find(|pair| pair.namespace == map::NS_ARTIST)
+    {
+        return Ok(Some(pair.value.clone()));
+    }
+
+    let name = request.name.trim();
+    if name.is_empty() {
+        return Ok(None);
+    }
+
+    let search: musicbrainz::ArtistSearch = api::get_json(base_url, &artist_search_path(name))?;
+    hearthsound_plugin::debug!(
+        "artist search matched {:?} artists, reading {}",
+        search.count,
+        search.artists.len()
+    );
+
+    Ok(searched_artist(&search.artists, name))
+}
+
+/// Picks the searched artist that names the requested one.
+///
+/// A search hit is the artist only when it spells the name the same way,
+/// ignoring case, and when the index scored it at least
+/// [`ARTIST_SEARCH_SCORE`]; every other hit is a namesake. Hits are read in the
+/// order the web service returned them, which is by relevance, so the most
+/// relevant qualifying hit wins.
+///
+/// # Parameters
+///
+/// - `artists`: the hits of an artist search.
+/// - `name`: the artist name that was searched for.
+///
+/// # Returns
+///
+/// The id of the first qualifying hit, or `None` when no hit qualifies.
+///
+/// # Example
+///
+/// ```text
+/// // hits: "Northlight Tribute" (100), "Northlight" (78), "northlight" (95)
+/// searched_artist(&hits, "Northlight") -> Some("aaaa0003-3333-4333-8333-333333333333")
+/// ```
+fn searched_artist(artists: &[musicbrainz::ArtistStub], name: &str) -> Option<String> {
+    artists
+        .iter()
+        .find(|artist| {
+            artist.name.eq_ignore_ascii_case(name)
+                && artist.score.unwrap_or(0.0) >= ARTIST_SEARCH_SCORE
+        })
+        .map(|artist| artist.id.clone())
+}
+
+/// Builds the path of an artist lookup.
+///
+/// # Parameters
+///
+/// - `mbid`: MusicBrainz artist id.
+///
+/// # Returns
+///
+/// The path, with the url relations requested and the JSON format.
+fn artist_path(mbid: &str) -> String {
+    format!(
+        "artist/{}?inc=url-rels&fmt=json",
+        url::encode_component(mbid)
+    )
+}
+
+/// Builds the path of an artist search.
+///
+/// # Parameters
+///
+/// - `name`: the artist name, unencoded.
+///
+/// # Returns
+///
+/// The path, with the query encoded and the result page bounded by
+/// [`ARTIST_SEARCH_LIMIT`].
+fn artist_search_path(name: &str) -> String {
+    let text = format!("artist:\"{}\"", query::escape_lucene(name));
+
+    format!(
+        "artist?query={}&limit={}&fmt=json",
+        url::encode_component(&text),
+        ARTIST_SEARCH_LIMIT
+    )
+}
+
 /// Builds the path of an ISRC lookup.
 ///
 /// The web service keys recordings by the bare 12-character code.
@@ -464,6 +632,10 @@ mod tests {
         browse.releases
     }
 
+    fn artist_search() -> musicbrainz::ArtistSearch {
+        serde_json::from_str(include_str!("fixtures/artist_search.json")).unwrap()
+    }
+
     #[test]
     fn an_isrc_lookup_asks_for_the_credits_and_releases() {
         assert_eq!(
@@ -510,6 +682,72 @@ mod tests {
     #[test]
     fn the_health_probe_reads_one_genre() {
         assert_eq!(health_path(), "genre/all?fmt=json&limit=1");
+    }
+
+    #[test]
+    fn an_artist_lookup_asks_for_the_url_relations() {
+        assert_eq!(
+            artist_path("d1f2e3a4-5b6c-4d7e-8f90-1a2b3c4d5e6f"),
+            "artist/d1f2e3a4-5b6c-4d7e-8f90-1a2b3c4d5e6f?inc=url-rels&fmt=json"
+        );
+    }
+
+    #[test]
+    fn an_artist_search_encodes_the_name_and_bounds_the_page() {
+        assert_eq!(
+            artist_search_path("Boards of Canada"),
+            "artist?query=artist%3A%22Boards%20of%20Canada%22&limit=5&fmt=json"
+        );
+    }
+
+    #[test]
+    fn an_artist_named_by_id_is_not_searched_for() {
+        let request = ArtistInfoRequest {
+            name: "Northlight".to_string(),
+            ids: vec![IdPair {
+                namespace: map::NS_ARTIST.to_string(),
+                value: "d1f2e3a4-5b6c-4d7e-8f90-1a2b3c4d5e6f".to_string(),
+            }],
+        };
+
+        assert_eq!(
+            artist_mbid("https://musicbrainz.invalid/ws/2/", &request).unwrap(),
+            Some("d1f2e3a4-5b6c-4d7e-8f90-1a2b3c4d5e6f".to_string())
+        );
+    }
+
+    #[test]
+    fn a_request_without_an_id_or_a_name_takes_no_request() {
+        let request = ArtistInfoRequest {
+            name: "  ".to_string(),
+            ids: Vec::new(),
+        };
+
+        assert_eq!(
+            artist_mbid("https://musicbrainz.invalid/ws/2/", &request).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn the_first_search_hit_that_names_the_artist_and_scores_well_wins() {
+        let search = artist_search();
+        let picked = searched_artist(&search.artists, "Northlight").unwrap();
+
+        // The fixture's hits are "Northlight Tribute" (100), "Northlight" (78),
+        // "northlight" ("95") and "Northlight" (91): only the third hit spells
+        // the name the same way and reaches the score a hit must reach, so the
+        // name case and the score both decide, and the first qualifying hit
+        // wins.
+        assert_eq!(picked, "aaaa0003-3333-4333-8333-333333333333");
+    }
+
+    #[test]
+    fn no_search_hit_names_an_artist_the_index_does_not_know() {
+        let search = artist_search();
+
+        assert_eq!(searched_artist(&search.artists, "Northlight Quintet"), None);
+        assert_eq!(searched_artist(&[], "Northlight"), None);
     }
 
     #[test]

@@ -35,6 +35,65 @@ pub struct ArtistCredit {
     pub artist: Option<Artist>,
 }
 
+/// The url of an artist's url relation.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RelationUrl {
+    /// The absolute URL the relation points at.
+    pub resource: String,
+}
+
+/// One relation of an artist.
+///
+/// The web service lists every relationship the artist has, of every target
+/// type; only a url relation carries a [`RelationUrl`], because a relation to
+/// another entity embeds that entity instead.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ArtistRelation {
+    /// The relation type as the web service names it, for example
+    /// `official homepage` or `last.fm`.
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// The url the relation points at, absent for a relation of another target
+    /// type.
+    pub url: Option<RelationUrl>,
+}
+
+/// An artist as an artist lookup returns it.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ArtistLookup {
+    /// MusicBrainz artist id.
+    pub id: String,
+    /// Artist name.
+    pub name: String,
+    /// The artist's relationships, as far as the requested inclusions returned
+    /// them.
+    #[serde(default)]
+    pub relations: Vec<ArtistRelation>,
+}
+
+/// An artist as an artist search returns it.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ArtistStub {
+    /// MusicBrainz artist id.
+    pub id: String,
+    /// Artist name.
+    pub name: String,
+    /// Relevance the search index reported for this artist, in `0..=100`.
+    #[serde(default, deserialize_with = "deserialize_score")]
+    pub score: Option<f32>,
+}
+
+/// The response of an artist search.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ArtistSearch {
+    /// Total number of artists the index matched, which may exceed the number
+    /// returned.
+    pub count: Option<u32>,
+    /// The matching artists, best match first.
+    #[serde(default)]
+    pub artists: Vec<ArtistStub>,
+}
+
 /// A genre as the web service embeds it in an entity.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Genre {

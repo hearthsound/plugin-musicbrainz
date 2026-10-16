@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Artist information through the metadata interface: `get-artist-info` resolves
+  an artist by an `mb-artist` id or by an exact-name search of the artist
+  index, and reports the id with the artist's web links from the url relations
+  MusicBrainz records.
+
 ### Changed
 
 - The plugin targets the 0.2.0 plugin API: the manifest declares

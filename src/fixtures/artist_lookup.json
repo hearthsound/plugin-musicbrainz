@@ -1,0 +1,117 @@
+{
+  "id": "d1f2e3a4-5b6c-4d7e-8f90-1a2b3c4d5e6f",
+  "name": "Northlight",
+  "sort-name": "Northlight",
+  "disambiguation": "",
+  "type": "Group",
+  "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+  "country": "GB",
+  "relations": [
+    {
+      "type-id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+      "type": "official homepage",
+      "target-type": "url",
+      "direction": "forward",
+      "ended": false,
+      "url": {
+        "id": "6f7e8d9c-5b4a-4392-8170-0f1e2d3c4b5a",
+        "resource": "https://northlight.example/"
+      },
+      "begin": null,
+      "end": null
+    },
+    {
+      "type": "wikipedia",
+      "target-type": "url",
+      "direction": "forward",
+      "ended": false,
+      "url": {
+        "id": "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d",
+        "resource": "https://en.wikipedia.org/wiki/Northlight"
+      }
+    },
+    {
+      "type": "wikidata",
+      "target-type": "url",
+      "direction": "forward",
+      "ended": false,
+      "url": {
+        "id": "8b9c0d1e-2f3a-4b5c-9d6e-7f8a9b0c1d2e",
+        "resource": "https://www.wikidata.org/wiki/Q1000000"
+      }
+    },
+    {
+      "type": "last.fm",
+      "target-type": "url",
+      "direction": "forward",
+      "ended": false,
+      "url": {
+        "id": "9c0d1e2f-3a4b-4c5d-ae6f-8a9b0c1d2e3f",
+        "resource": "https://www.last.fm/music/Northlight"
+      }
+    },
+    {
+      "type": "discogs",
+      "target-type": "url",
+      "direction": "forward",
+      "ended": false,
+      "url": {
+        "id": "0d1e2f3a-4b5c-4d6e-bf7a-9b0c1d2e3f4a",
+        "resource": "https://www.discogs.com/artist/1000000"
+      }
+    },
+    {
+      "type": "allmusic",
+      "target-type": "url",
+      "direction": "forward",
+      "ended": false,
+      "url": {
+        "id": "1e2f3a4b-5c6d-4e7f-8a9b-0c1d2e3f4a5b",
+        "resource": "https://www.allmusic.com/artist/northlight-mn0000000000"
+      }
+    },
+    {
+      "type": "bandcamp",
+      "target-type": "url",
+      "direction": "forward",
+      "ended": false,
+      "url": {
+        "id": "2f3a4b5c-6d7e-4f8a-9b0c-1d2e3f4a5b6c",
+        "resource": "https://northlight.bandcamp.com/"
+      }
+    },
+    {
+      "type": "social network",
+      "target-type": "url",
+      "direction": "forward",
+      "ended": false,
+      "url": {
+        "id": "3a4b5c6d-7e8f-4a9b-8c0d-2e3f4a5b6c7d",
+        "resource": "https://example.social/@northlight"
+      }
+    },
+    {
+      "type": "image",
+      "target-type": "url",
+      "direction": "forward",
+      "ended": false,
+      "url": {
+        "id": "4b5c6d7e-8f9a-4b0c-9d1e-3f4a5b6c7d8e",
+        "resource": "https://northlight.example/press.jpg"
+      }
+    },
+    {
+      "type-id": "5c6d7e8f-9a0b-4c1d-8e2f-4a5b6c7d8e9f",
+      "type": "member of band",
+      "target-type": "artist",
+      "direction": "backward",
+      "ended": false,
+      "artist": {
+        "id": "5d6e7f8a-9b0c-4d1e-8f2a-5b6c7d8e9f0a",
+        "name": "Alex Ridley",
+        "sort-name": "Ridley, Alex"
+      },
+      "attributes": ["founder"]
+    }
+  ]
+}

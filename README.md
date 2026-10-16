@@ -4,8 +4,9 @@ A [Hearthsound](https://github.com/hearthsound) metadata plugin backed by the
 [MusicBrainz web service](https://musicbrainz.org/doc/MusicBrainz_API). It
 compiles to a WebAssembly component that implements the `metadata` provider
 interface, so a Hearthsound server can resolve a recording hint (title,
-artists, album, duration, ISRC) to scored MusicBrainz recordings and
-materialize a release, with its track list, from MusicBrainz ids.
+artists, album, duration, ISRC) to scored MusicBrainz recordings, materialize a
+release, with its track list, from MusicBrainz ids, and read an artist's web
+links from its MusicBrainz id or name.
 
 The plugin needs no MusicBrainz account and no API key: every endpoint it calls
 is part of the public web service. It does not fetch artwork yet; the images of
@@ -109,6 +110,19 @@ group, its barcode as the UPC, its genres (or the release group's when the
 release has none), and every track of every medium with the medium position as
 the disc number, the track position as the track number, the recording id and
 the track's first ISRC. Images are empty: this plugin does not read artwork yet.
+
+`get-artist-info` reads an artist's web pages. A request that carries an
+`mb-artist` id is looked up directly through `GET /artist/{mbid}?inc=url-rels`;
+a request that carries only a name goes through
+`GET /artist?query=artist:"<name>"` and takes the first hit that spells the name
+the same way, ignoring case, and that the index scored at least 90, so a
+namesake, a tribute act or a loosely similar name is not mistaken for the
+artist. The answer carries the `mb-artist` id and one link per mapped relation
+(`official homepage` as `homepage`, plus `wikipedia`, `wikidata`, `last.fm`,
+`discogs`, `allmusic` and `bandcamp`); every other relation type is dropped. The
+biography is empty, because MusicBrainz publishes none. An artist that neither
+an id nor a qualifying hit names is answered with no information rather than an
+error.
 
 Errors follow the provider contract: `404` is a not-found, `429` and the `503`
 MusicBrainz answers an exceeded request rate with are rate-limited (with the
