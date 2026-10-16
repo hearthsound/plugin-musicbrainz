@@ -38,7 +38,7 @@
 
 use hearthsound_plugin::metadata_provider::exports::hearthsound::plugin::lifecycle::Guest as LifecycleGuest;
 use hearthsound_plugin::metadata_provider::exports::hearthsound::plugin::metadata::{
-    Guest as MetadataGuest, RecordingHint, RecordingMatch,
+    ArtistInfo, ArtistInfoRequest, Guest as MetadataGuest, RecordingHint, RecordingMatch,
 };
 use hearthsound_plugin::types::{Album, IdPair, ProviderError};
 
@@ -158,6 +158,26 @@ impl MetadataGuest for MusicBrainzMetadata {
         hearthsound_plugin::debug!("get-release for {} ids", ids.len());
 
         metadata::get_release(&base_url()?, &ids)
+    }
+
+    /// Answers that the plugin holds no information on the requested artist.
+    ///
+    /// # Parameters
+    ///
+    /// - `request`: the artist the caller wants information on.
+    ///
+    /// # Returns
+    ///
+    /// `None`, which tells the server the plugin knows nothing about this
+    /// artist.
+    fn get_artist_info(request: ArtistInfoRequest) -> Result<Option<ArtistInfo>, ProviderError> {
+        hearthsound_plugin::debug!(
+            "get-artist-info for {:?} with {} ids",
+            request.name,
+            request.ids.len()
+        );
+
+        Ok(None)
     }
 }
 

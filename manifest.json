@@ -7,11 +7,18 @@
   "authors": ["Hearthsound contributors"],
   "license": "MIT OR Apache-2.0",
   "homepage": "https://github.com/hearthsound/plugin-musicbrainz",
-  "api": "hearthsound:plugin@0.1.0",
-  "provides": ["metadata"],
+  "api": "hearthsound:plugin@0.2.0",
+  "provides": ["metadata", "artwork"],
   "permissions": {
     "http": {
-      "hosts": ["musicbrainz.org", "$config:baseUrl"],
+      "hosts": [
+        "musicbrainz.org",
+        "coverartarchive.org",
+        "archive.org",
+        "*.archive.org",
+        "$config:baseUrl",
+        "$config:artworkBaseUrl"
+      ],
       "rateLimit": { "perSecond": 1, "burst": 1 }
     }
   },
@@ -27,12 +34,22 @@
             "title": "MusicBrainz WS/2 base URL",
             "description": "Base URL of the MusicBrainz web service. Point it at a mirror to keep traffic off musicbrainz.org; a value without a trailing slash gets one.",
             "default": "https://musicbrainz.org/ws/2/"
+          },
+          "artworkBaseUrl": {
+            "type": "string",
+            "format": "uri",
+            "title": "Cover Art Archive base URL",
+            "description": "Base URL of the Cover Art Archive. Point it at a mirror to keep traffic off coverartarchive.org; a value without a trailing slash gets one.",
+            "default": "https://coverartarchive.org"
           }
         }
       },
       "uiSchema": {
         "type": "VerticalLayout",
-        "elements": [{ "type": "Control", "scope": "#/properties/baseUrl" }]
+        "elements": [
+          { "type": "Control", "scope": "#/properties/baseUrl" },
+          { "type": "Control", "scope": "#/properties/artworkBaseUrl" }
+        ]
       }
     },
     "user": null

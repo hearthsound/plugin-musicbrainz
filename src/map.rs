@@ -1,7 +1,7 @@
 //! Translation of MusicBrainz records into provider records.
 //!
 //! The functions here are pure: they take the types of [`crate::musicbrainz`]
-//! and return the records of the `hearthsound:plugin@0.1.0` `types` interface,
+//! and return the records of the `hearthsound:plugin@0.2.0` `types` interface,
 //! so they are unit-tested on the host target against captured web service
 //! responses.
 //!

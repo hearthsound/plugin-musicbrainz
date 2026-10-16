@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The plugin targets the 0.2.0 plugin API: the manifest declares
+  `hearthsound:plugin@0.2.0` and `provides` metadata and artwork, the SDK
+  dependency and the CI CLI install move to the SDK's `v0.2.0` tag, and the
+  instance requests the Cover Art Archive hosts along with an `artworkBaseUrl`
+  setting.
+
 ## [0.1.0] - 2026-10-13
 
 ### Added
