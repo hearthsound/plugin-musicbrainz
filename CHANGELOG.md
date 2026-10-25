@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-25
+
+### Changed
+
+- Build against the `hearthsound:plugin@0.4.0` API (plugin-sdk v0.4.0).
+
+### Fixed
+
+- The earliest official release of a release group is picked across the
+  group's pages rather than from the first browse page: the browse reports its
+  `release-count`, the scan pages through the group up to five pages of 100,
+  and a group past that cap logs that the scan stopped there. A group whose
+  earliest press is not on the first page no longer reports a later year.
+- An ISRC lookup no longer carries an unbounded fan-out of release detail
+  fetches: at most five hits are fetched, and the rest are read without their
+  releases with a debug line naming them.
+- A release detail fetch that fails because the web service is unavailable or
+  rate limited now fails the lookup instead of being folded into a truncated
+  match set; an error that concerns only that recording is still logged and
+  skipped.
+
 ## [0.3.0] - 2026-10-23
 
 ### Changed
@@ -51,7 +72,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A CI workflow that formats, lints, tests, builds, checks and packs the
   plugin, and uploads the archive.
 
-[Unreleased]: https://github.com/hearthsound/plugin-musicbrainz/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/hearthsound/plugin-musicbrainz/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/hearthsound/plugin-musicbrainz/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/hearthsound/plugin-musicbrainz/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/hearthsound/plugin-musicbrainz/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/hearthsound/plugin-musicbrainz/releases/tag/v0.1.0

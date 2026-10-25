@@ -35,7 +35,7 @@ the `metadata` and `artwork` provider interfaces.
 Install the plugin CLI from the SDK repository:
 
 ```console
-cargo install --locked --git https://github.com/hearthsound/plugin-sdk --tag v0.3.0 hearthsound-plugin-cli
+cargo install --locked --git https://github.com/hearthsound/plugin-sdk --tag v0.4.0 hearthsound-plugin-cli
 ```
 
 Then validate the manifest and the component:
@@ -44,7 +44,7 @@ Then validate the manifest and the component:
 hsplugin check
 ```
 
-It prints `ok: app.hearthsound.musicbrainz 0.3.0 (provides metadata, artwork)`
+It prints `ok: app.hearthsound.musicbrainz 0.4.0 (provides metadata, artwork)`
 on success.
 
 Finally, build the archive you install on a server:
@@ -53,7 +53,7 @@ Finally, build the archive you install on a server:
 hsplugin pack --out-dir dist
 ```
 
-`dist/app.hearthsound.musicbrainz-0.3.0.hsplugin` contains the manifest and the
+`dist/app.hearthsound.musicbrainz-0.4.0.hsplugin` contains the manifest and the
 component.
 
 ## Tests

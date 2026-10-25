@@ -284,6 +284,13 @@ pub struct ReleaseBrowse {
     /// chose.
     #[serde(default)]
     pub releases: Vec<ReleaseStub>,
+    /// Number of releases in the browsed release group, which may exceed the
+    /// number this page holds.
+    #[serde(default, rename = "release-count")]
+    pub release_count: Option<u32>,
+    /// Offset of this page within the browsed release group.
+    #[serde(default, rename = "release-offset")]
+    pub release_offset: Option<u32>,
 }
 
 /// The response of a release search.
