@@ -202,25 +202,6 @@ pub fn release_path(mbid: &str) -> String {
     )
 }
 
-/// Builds the path of a release lookup that reads only what an album reference
-/// needs.
-///
-/// # Parameters
-///
-/// - `mbid`: MusicBrainz release id.
-///
-/// # Returns
-///
-/// The path, with the artist credits, the release group and the media
-/// requested, which are the parts of a release a coarse reference reports: who
-/// made it, what kind of release it is, and how many tracks it holds.
-pub fn release_ref_path(mbid: &str) -> String {
-    format!(
-        "release/{}?inc=artist-credits+release-groups+media&fmt=json",
-        url::encode_component(mbid)
-    )
-}
-
 /// Builds the path of a page of a release group's official releases.
 ///
 /// # Parameters
@@ -439,14 +420,6 @@ mod tests {
         assert_eq!(
             release_path("6360f948-17d1-4135-a580-34dc200930d8"),
             "release/6360f948-17d1-4135-a580-34dc200930d8?inc=recordings+artist-credits+isrcs+release-groups+genres&fmt=json"
-        );
-    }
-
-    #[test]
-    fn a_release_reference_lookup_asks_for_the_credits_and_the_group() {
-        assert_eq!(
-            release_ref_path("6360f948-17d1-4135-a580-34dc200930d8"),
-            "release/6360f948-17d1-4135-a580-34dc200930d8?inc=artist-credits+release-groups+media&fmt=json"
         );
     }
 

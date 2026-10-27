@@ -21,6 +21,7 @@ use hearthsound_plugin::host::http::{Request, Response};
 use hearthsound_plugin::http;
 use hearthsound_plugin::types::ProviderError;
 
+use crate::cache;
 use crate::url;
 
 /// Wall-clock budget for one web service request, in milliseconds.
@@ -65,6 +66,64 @@ pub(crate) fn get_json<T: DeserializeOwned>(
     path: &str,
 ) -> Result<T, ProviderError> {
     get_json_at(&url::endpoint(base_url, path))
+}
+
+/// How long a lookup body stays readable in the cache, in milliseconds.
+///
+/// One hour: a release or an artist read by one page answer is asked for again
+/// by the next album of the same artist, and the web service rate-limits one
+/// request per second. An hour is long enough that a whole import or an index
+/// run reads each entity once, and short enough that a correction MusicBrainz
+/// made reaches the server the same day.
+pub(crate) const LOOKUP_TTL_MS: u64 = 3_600_000;
+
+/// Reads a web service lookup, from the cache when the body is stored.
+///
+/// A page asks for the same release or artist more than once - an album's page,
+/// its release group's earliest release, and the artist its discography lists
+/// all name one entity - and the web service allows one request per second, so
+/// the body of a lookup is stored and reused. The body is cached as text, exactly
+/// as the service sent it, so a cached answer costs no re-encoding.
+///
+/// # Parameters
+///
+/// - `store`: the cache to read and write.
+/// - `base_url`: base URL of the web service.
+/// - `path`: web service path, already query-encoded.
+///
+/// # Returns
+///
+/// The decoded response body.
+///
+/// # Errors
+///
+/// Returns the same errors as [`get_json`]. A cache that cannot be read or
+/// written costs a request, never a failed call.
+pub(crate) fn get_json_cached<T: DeserializeOwned>(
+    store: &dyn cache::Store,
+    base_url: &str,
+    path: &str,
+) -> Result<T, ProviderError> {
+    let key = format!("body:{path}");
+    if let Some(text) = store.read(&key)
+        && let Ok(value) = serde_json::from_str::<T>(&text)
+    {
+        debug!("lookup {key} was used");
+
+        return Ok(value);
+    }
+
+    let endpoint = url::endpoint(base_url, path);
+    let response = http::send(&request(&endpoint))?;
+    if !http::is_success(&response) {
+        return Err(status_error(&response, &endpoint));
+    }
+    let text = String::from_utf8_lossy(&response.body).into_owned();
+    let value = serde_json::from_str(&text)
+        .map_err(|error| ProviderError::Internal(format!("{endpoint}: {error}")))?;
+    store.write(&key, &text, LOOKUP_TTL_MS);
+
+    Ok(value)
 }
 
 /// Sends a GET request to an absolute URL and decodes the JSON body.
@@ -259,6 +318,63 @@ fn retry_after_ms(response: &Response) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cache::Store as _;
+
+    /// A store that keeps its entries in memory and records its writes.
+    struct MemoryStore {
+        entries: std::cell::RefCell<std::collections::HashMap<String, String>>,
+        writes: std::cell::RefCell<Vec<(String, u64)>>,
+    }
+
+    impl MemoryStore {
+        /// Creates an empty store.
+        fn empty() -> MemoryStore {
+            MemoryStore {
+                entries: std::cell::RefCell::new(std::collections::HashMap::new()),
+                writes: std::cell::RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl cache::Store for MemoryStore {
+        fn read(&self, key: &str) -> Option<String> {
+            self.entries.borrow().get(key).cloned()
+        }
+
+        fn write(&self, key: &str, value: &str, ttl_ms: u64) {
+            self.entries
+                .borrow_mut()
+                .insert(key.to_owned(), value.to_owned());
+            self.writes.borrow_mut().push((key.to_owned(), ttl_ms));
+        }
+    }
+
+    /// A lookup whose body is stored is answered from the store.
+    ///
+    /// The host's HTTP import does not exist on this target and aborts the
+    /// process when it is called, so an answer proves the request was never
+    /// made.
+    #[test]
+    fn a_stored_lookup_body_is_answered_from_the_cache() {
+        let store = MemoryStore::empty();
+        let path = "release/6360f948-17d1-4135-a580-34dc200930d8?inc=recordings&fmt=json";
+        store.write(
+            &format!("body:{path}"),
+            r#"{"id":"6360f948-17d1-4135-a580-34dc200930d8","title":"Blue Monday","media":[]}"#,
+            60_000,
+        );
+
+        let release: crate::musicbrainz::Release =
+            get_json_cached(&store, "https://musicbrainz.invalid/ws/2/", path).unwrap();
+
+        assert_eq!(release.id, "6360f948-17d1-4135-a580-34dc200930d8");
+        assert_eq!(release.title, "Blue Monday");
+        assert_eq!(
+            store.writes.borrow().len(),
+            1,
+            "the cached answer is not written again"
+        );
+    }
 
     /// Builds a response with the given status, headers and body.
     fn response(status: u16, headers: &[(&str, &str)], body: &str) -> Response {

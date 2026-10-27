@@ -18,7 +18,6 @@ use std::collections::BTreeSet;
 use hearthsound_plugin::catalog_metadata_artwork_provider::exports::hearthsound::plugin::catalog::{
     SearchQuery, SearchResults,
 };
-use hearthsound_plugin::host::http;
 use hearthsound_plugin::types::{
     Album, AlbumRef, Artist, EntityKind, IdPair, ProviderError, Track,
 };
@@ -262,6 +261,7 @@ pub fn get_track(base_url: &str, id: &str) -> Result<Track, ProviderError> {
 /// # Parameters
 ///
 /// - `base_url`: base URL of the web service.
+/// - `store`: the cache a release body is read from and stored in.
 /// - `id`: MusicBrainz release id.
 ///
 /// # Returns
@@ -272,8 +272,9 @@ pub fn get_track(base_url: &str, id: &str) -> Result<Track, ProviderError> {
 ///
 /// Returns [`ProviderError::NotFound`] when the web service does not know the
 /// release, and the provider error of the request otherwise.
-pub fn get_album(base_url: &str, id: &str) -> Result<Album, ProviderError> {
-    let release: musicbrainz::Release = api::get_json(base_url, &paths::release_path(id))?;
+pub fn get_album(base_url: &str, store: &dyn Store, id: &str) -> Result<Album, ProviderError> {
+    let release: musicbrainz::Release =
+        api::get_json_cached(store, base_url, &paths::release_path(id))?;
     debug!(
         "read release {} with {} media",
         release.id,
@@ -310,7 +311,8 @@ pub fn get_artist(
     language: &str,
     id: &str,
 ) -> Result<Artist, ProviderError> {
-    let artist: musicbrainz::ArtistLookup = api::get_json(base_url, &paths::artist_path(id))?;
+    let artist: musicbrainz::ArtistLookup =
+        api::get_json_cached(store, base_url, &paths::artist_path(id))?;
     debug!(
         "read artist {} with {} relations",
         artist.id,
@@ -405,30 +407,28 @@ pub fn artist_albums(
 
 /// Reads the most played recordings of an artist.
 ///
-/// ListenBrainz answers the popularity endpoint only for a request that
-/// carries the token of an account, so an instance without one reports no top
-/// tracks rather than a failure: the artist's other data is still worth
-/// answering, and a token is an administrator's decision.
+/// ListenBrainz answers its popularity endpoint for anyone who asks, so the
+/// plugin needs no account and no token: the list is the one ListenBrainz counts
+/// for its listeners, whoever they are.
 ///
 /// # Parameters
 ///
 /// - `id`: MusicBrainz artist id.
 /// - `limit`: number of tracks to answer.
-/// - `token`: the ListenBrainz token of the instance, empty when it has none.
 ///
 /// # Returns
 ///
 /// The tracks ListenBrainz ranks highest for the artist, in its order, sliced to
-/// `limit`. A zero limit, and an instance without a token, answer nothing
-/// without a request.
+/// `limit`. A zero limit answers nothing without a request.
 ///
 /// # Errors
 ///
-/// Returns the provider error of the request, including
-/// [`ProviderError::Unauthorized`] when ListenBrainz refuses the token.
-pub fn artist_top_tracks(id: &str, limit: u32, token: &str) -> Result<Vec<Track>, ProviderError> {
-    if limit == 0 || token.is_empty() {
-        debug!("no popularity list: no token or no room to answer one");
+/// Returns the provider error of the request. An entry that names another
+/// artist beside the one asked about is dropped rather than misattributed; see
+/// [`map::popularity_track`].
+pub fn artist_top_tracks(id: &str, limit: u32) -> Result<Vec<Track>, ProviderError> {
+    if limit == 0 {
+        debug!("no popularity list: no room to answer one");
 
         return Ok(Vec::new());
     }
@@ -437,45 +437,14 @@ pub fn artist_top_tracks(id: &str, limit: u32, token: &str) -> Result<Vec<Track>
         url::LISTENBRAINZ_BASE_URL,
         &paths::listenbrainz_top_recordings_path(id),
     );
-    let entries: Vec<listenbrainz::RecordingPopularity> =
-        api::send_json(popularity_request(&endpoint, token))?;
+    let entries: Vec<listenbrainz::RecordingPopularity> = api::send_json(api::request(&endpoint))?;
     debug!("popularity list held {} recordings", entries.len());
 
     Ok(entries
         .iter()
         .take(usize::try_from(limit).unwrap_or(usize::MAX))
-        .map(map::popularity_track)
+        .filter_map(|entry| map::popularity_track(entry, id))
         .collect())
-}
-
-/// Builds the popularity request of an artist.
-///
-/// The token travels in the `Authorization` header ListenBrainz documents for
-/// its own clients, spelled `Token <token>`, so the account the token belongs to
-/// is the one the popularity is counted for.
-///
-/// # Parameters
-///
-/// - `endpoint`: absolute URL of the artist's popularity list.
-/// - `token`: the ListenBrainz token, never empty.
-///
-/// # Returns
-///
-/// The request, ready to send.
-///
-/// # Example
-///
-/// ```text
-/// popularity_request("https://api.listenbrainz.org/1/popularity/top-recordings-for-artist/<mbid>", "abc")
-///   -> GET with `authorization: Token abc`
-/// ```
-fn popularity_request(endpoint: &str, token: &str) -> http::Request {
-    let mut request = api::request(endpoint);
-    request
-        .headers
-        .push(("authorization".to_string(), format!("Token {token}")));
-
-    request
 }
 
 /// Resolves one ISRC to its tracks.
@@ -536,6 +505,7 @@ pub fn lookup_isrc(base_url: &str, isrc: &str) -> Result<Vec<Track>, ProviderErr
 /// # Parameters
 ///
 /// - `base_url`: base URL of the web service.
+/// - `store`: the cache release bodies are read from and stored in.
 /// - `ids`: the canonical ids to resolve. `mb-release` names a release
 ///   directly, `mb-release-group` resolves to the earliest official release of
 ///   the group, and `upc` searches the release index for the barcode. An id in
@@ -551,12 +521,16 @@ pub fn lookup_isrc(base_url: &str, isrc: &str) -> Result<Vec<Track>, ProviderErr
 /// Returns the provider error of a request that failed for a reason other than
 /// a missing album; a missing album is skipped, because the caller asked about
 /// several ids at once.
-pub fn lookup_album(base_url: &str, ids: &[IdPair]) -> Result<Vec<AlbumRef>, ProviderError> {
+pub fn lookup_album(
+    base_url: &str,
+    store: &dyn Store,
+    ids: &[IdPair],
+) -> Result<Vec<AlbumRef>, ProviderError> {
     let mut refs: Vec<AlbumRef> = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
 
     for pair in ids {
-        let reference = match album_for(base_url, pair)? {
+        let reference = match album_for(base_url, store, pair)? {
             Some(reference) => reference,
             None => continue,
         };
@@ -576,6 +550,7 @@ pub fn lookup_album(base_url: &str, ids: &[IdPair]) -> Result<Vec<AlbumRef>, Pro
 /// # Parameters
 ///
 /// - `base_url`: base URL of the web service.
+/// - `store`: the cache release bodies are read from and stored in.
 /// - `pair`: the canonical id to resolve.
 ///
 /// # Returns
@@ -587,7 +562,11 @@ pub fn lookup_album(base_url: &str, ids: &[IdPair]) -> Result<Vec<AlbumRef>, Pro
 ///
 /// Returns the provider error of a request that failed for a reason other than
 /// a missing album.
-fn album_for(base_url: &str, pair: &IdPair) -> Result<Option<AlbumRef>, ProviderError> {
+fn album_for(
+    base_url: &str,
+    store: &dyn Store,
+    pair: &IdPair,
+) -> Result<Option<AlbumRef>, ProviderError> {
     let value = pair.value.trim();
 
     if value.is_empty() {
@@ -595,7 +574,7 @@ fn album_for(base_url: &str, pair: &IdPair) -> Result<Option<AlbumRef>, Provider
     }
 
     match pair.namespace.as_str() {
-        map::NS_RELEASE => reference_of_release(base_url, value),
+        map::NS_RELEASE => reference_of_release(base_url, store, value),
         map::NS_RELEASE_GROUP => {
             let release = match metadata::earliest_official_release(base_url, value) {
                 Ok(release) => release,
@@ -603,7 +582,7 @@ fn album_for(base_url: &str, pair: &IdPair) -> Result<Option<AlbumRef>, Provider
                 Err(error) => return Err(error),
             };
 
-            reference_of_release(base_url, &release)
+            reference_of_release(base_url, store, &release)
         }
         map::NS_UPC => by_barcode(base_url, value),
         _ => Ok(None),
@@ -615,6 +594,7 @@ fn album_for(base_url: &str, pair: &IdPair) -> Result<Option<AlbumRef>, Provider
 /// # Parameters
 ///
 /// - `base_url`: base URL of the web service.
+/// - `store`: the cache the release body is read from and stored in.
 /// - `mbid`: MusicBrainz release id.
 ///
 /// # Returns
@@ -624,8 +604,13 @@ fn album_for(base_url: &str, pair: &IdPair) -> Result<Option<AlbumRef>, Provider
 /// # Errors
 ///
 /// Returns the provider error of the request.
-fn reference_of_release(base_url: &str, mbid: &str) -> Result<Option<AlbumRef>, ProviderError> {
-    match api::get_json::<musicbrainz::Release>(base_url, &paths::release_ref_path(mbid)) {
+fn reference_of_release(
+    base_url: &str,
+    store: &dyn Store,
+    mbid: &str,
+) -> Result<Option<AlbumRef>, ProviderError> {
+    match api::get_json_cached::<musicbrainz::Release>(store, base_url, &paths::release_path(mbid))
+    {
         Ok(release) => Ok(Some(map::release_ref(&release))),
         Err(ProviderError::NotFound) => Ok(None),
         Err(error) => Err(error),
@@ -768,14 +753,14 @@ mod tests {
             .is_empty()
         );
         assert!(
-            artist_top_tracks("69158f97-4c07-4c4e-baf8-4e4ab1ed666e", 0, "token")
+            artist_top_tracks("69158f97-4c07-4c4e-baf8-4e4ab1ed666e", 0)
                 .unwrap()
                 .is_empty()
         );
     }
 
     #[test]
-    fn a_popularity_request_carries_the_configured_token() {
+    fn a_popularity_request_needs_no_credentials() {
         let entries: Vec<listenbrainz::RecordingPopularity> =
             serde_json::from_str(include_str!("fixtures/artist_popularity.json")).unwrap();
         assert_eq!(entries.len(), 2, "the fixture holds the popularity list");
@@ -784,32 +769,19 @@ mod tests {
             url::LISTENBRAINZ_BASE_URL,
             &paths::listenbrainz_top_recordings_path("69158f97-4c07-4c4e-baf8-4e4ab1ed666e"),
         );
-        let request = popularity_request(&endpoint, "listener-token");
+        let request = api::request(&endpoint);
 
         assert_eq!(request.method, "GET");
         assert_eq!(
             request.url,
             "https://api.listenbrainz.org/1/popularity/top-recordings-for-artist/69158f97-4c07-4c4e-baf8-4e4ab1ed666e"
         );
-        assert_eq!(
-            request.headers,
-            vec![(
-                "authorization".to_string(),
-                "Token listener-token".to_string()
-            )]
+        assert!(
+            request.headers.is_empty(),
+            "the endpoint is public, so no header is sent"
         );
         assert_eq!(request.body, None);
         assert!(request.timeout_ms.is_some(), "the budget is set");
-    }
-
-    #[test]
-    fn an_instance_without_a_token_answers_no_top_tracks() {
-        // No request is made: the host's HTTP import does not exist on this
-        // target and aborts the process when it is called, so the empty answer
-        // proves the call stops before it sends anything.
-        let tracks = artist_top_tracks("69158f97-4c07-4c4e-baf8-4e4ab1ed666e", 100, "").unwrap();
-
-        assert!(tracks.is_empty());
     }
 
     #[test]
@@ -827,13 +799,15 @@ mod tests {
     fn an_id_in_another_namespace_resolves_to_nothing() {
         let base_url = "https://musicbrainz.invalid/ws/2/";
 
+        let store = crate::cache::InstanceStore;
+
         assert!(
-            album_for(base_url, &pair(map::NS_ISRC, "GBBPW9800010"))
+            album_for(base_url, &store, &pair(map::NS_ISRC, "GBBPW9800010"))
                 .unwrap()
                 .is_none()
         );
         assert!(
-            album_for(base_url, &pair(map::NS_RELEASE, "  "))
+            album_for(base_url, &store, &pair(map::NS_RELEASE, "  "))
                 .unwrap()
                 .is_none()
         );

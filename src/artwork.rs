@@ -178,12 +178,12 @@ fn artist_artwork(
         return Ok(Vec::new());
     };
 
-    let artist: musicbrainz::ArtistLookup = match api::get_json(base_url, &paths::artist_path(mbid))
-    {
-        Ok(artist) => artist,
-        Err(ProviderError::NotFound) => return Ok(Vec::new()),
-        Err(error) => return Err(error),
-    };
+    let artist: musicbrainz::ArtistLookup =
+        match api::get_json_cached(store, base_url, &paths::artist_path(mbid)) {
+            Ok(artist) => artist,
+            Err(ProviderError::NotFound) => return Ok(Vec::new()),
+            Err(error) => return Err(error),
+        };
 
     Ok(wikimedia::portrait(store, language, &artist.relations)?
         .into_iter()

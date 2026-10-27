@@ -2,17 +2,29 @@
   "manifestVersion": 1,
   "id": "app.hearthsound.musicbrainz",
   "name": "MusicBrainz metadata",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Search, resolve and illustrate music from the MusicBrainz web service, without an account or an API key.",
-  "authors": ["Hearthsound contributors"],
+  "authors": [
+    "Hearthsound contributors"
+  ],
   "license": "MIT OR Apache-2.0",
   "homepage": "https://github.com/hearthsound/plugin-musicbrainz",
   "api": "hearthsound:plugin@0.5.0",
-  "provides": ["catalog", "metadata", "artwork"],
+  "provides": [
+    "catalog",
+    "metadata",
+    "artwork"
+  ],
   "permissions": {
     "http": {
       "hosts": [
-        { "host": "musicbrainz.org", "rateLimit": { "perSecond": 1, "burst": 1 } },
+        {
+          "host": "musicbrainz.org",
+          "rateLimit": {
+            "perSecond": 1,
+            "burst": 1
+          }
+        },
         "coverartarchive.org",
         "archive.org",
         "*.archive.org",
@@ -22,10 +34,22 @@
         "thumb.wikimedia.org",
         "upload.wikimedia.org",
         "api.listenbrainz.org",
-        { "host": "$config:baseUrl", "rateLimit": { "perSecond": 1, "burst": 1 } },
+        {
+          "host": "$config:baseUrl",
+          "rateLimit": {
+            "perSecond": 1,
+            "burst": 1
+          }
+        },
         "$config:artworkBaseUrl"
       ],
-      "rateLimit": { "perSecond": 5, "burst": 5 }
+      "rateLimit": {
+        "perSecond": 5,
+        "burst": 5
+      }
+    },
+    "kv": {
+      "maxBytes": 67108864
     }
   },
   "config": {
@@ -54,27 +78,32 @@
             "title": "Wikipedia language",
             "description": "Language code of the Wikipedia edition artist biographies are read from, for example en, de or pt. An artist whose Wikidata item has no page in this edition falls back to the English one.",
             "default": "en"
-          },
-          "listenbrainzToken": {
-            "type": "string",
-            "title": "ListenBrainz token",
-            "description": "Token of a ListenBrainz account; the popularity API that names an artist's top tracks requires one. Without it the plugin omits top tracks instead of failing.",
-            "default": "",
-            "writeOnly": true
           }
         }
       },
       "uiSchema": {
         "type": "VerticalLayout",
         "elements": [
-          { "type": "Control", "scope": "#/properties/baseUrl" },
-          { "type": "Control", "scope": "#/properties/artworkBaseUrl" },
-          { "type": "Control", "scope": "#/properties/wikipediaLanguage" },
-          { "type": "Control", "scope": "#/properties/listenbrainzToken" }
+          {
+            "type": "Control",
+            "scope": "#/properties/baseUrl"
+          },
+          {
+            "type": "Control",
+            "scope": "#/properties/artworkBaseUrl"
+          },
+          {
+            "type": "Control",
+            "scope": "#/properties/wikipediaLanguage"
+          }
         ]
       }
     },
     "user": null
   },
-  "resources": { "memoryMb": 64, "callTimeoutMs": 30000, "maxInstances": 2 }
+  "resources": {
+    "memoryMb": 64,
+    "callTimeoutMs": 30000,
+    "maxInstances": 2
+  }
 }

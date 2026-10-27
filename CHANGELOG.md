@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- The `listenbrainzToken` instance setting. The popularity endpoint that names
+  an artist's top tracks answers anonymously, so the token was never needed and
+  the instance form asked for an account that no endpoint requires.
+
+### Added
+
+- Release and artist lookups are cached for an hour, keyed by their request
+  path. One page asks for the same release and artist several times, and the web
+  service allows one request per second, so a cached body is what keeps an
+  album, its release group and its artist to one request each.
+- The manifest requests key-value storage large enough for a release body.
+
+### Fixed
+
+- A popularity entry that credits more than one artist answers nothing instead
+  of crediting the recording to the artist whose list it is. ListenBrainz
+  reports a collaboration as one entry with both artists' MusicBrainz ids, and
+  attaching both gave one artist row the biography and portrait of another.
+
 ## [0.5.2] - 2026-10-27
 
 ### Fixed

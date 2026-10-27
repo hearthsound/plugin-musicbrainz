@@ -99,7 +99,11 @@ pub fn resolve_recording(
 /// `mb-release` nor an `mb-release-group` pair, when the release group has no
 /// official release, and when the web service does not know the release; the
 /// provider error of the request that failed otherwise.
-pub fn get_release(base_url: &str, ids: &[IdPair]) -> Result<Album, ProviderError> {
+pub fn get_release(
+    base_url: &str,
+    store: &dyn Store,
+    ids: &[IdPair],
+) -> Result<Album, ProviderError> {
     let release_id = match ids.iter().find(|pair| pair.namespace == map::NS_RELEASE) {
         Some(pair) => pair.value.clone(),
         None => {
@@ -115,7 +119,8 @@ pub fn get_release(base_url: &str, ids: &[IdPair]) -> Result<Album, ProviderErro
         }
     };
 
-    let release: musicbrainz::Release = api::get_json(base_url, &paths::release_path(&release_id))?;
+    let release: musicbrainz::Release =
+        api::get_json_cached(store, base_url, &paths::release_path(&release_id))?;
     debug!(
         "read release {} with {} media",
         release.id,
@@ -165,7 +170,8 @@ pub fn artist_info(
         return Ok(None);
     };
 
-    let artist: musicbrainz::ArtistLookup = api::get_json(base_url, &paths::artist_path(&mbid))?;
+    let artist: musicbrainz::ArtistLookup =
+        api::get_json_cached(store, base_url, &paths::artist_path(&mbid))?;
     debug!(
         "read artist {} with {} relations",
         artist.id,

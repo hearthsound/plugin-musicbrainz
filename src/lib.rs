@@ -147,9 +147,6 @@ struct Config {
     /// Wikipedia language biographies are read from.
     #[serde(default = "default_wikipedia_language")]
     wikipedia_language: String,
-    /// Token of a ListenBrainz account, empty when the instance has none.
-    #[serde(default)]
-    listenbrainz_token: String,
 }
 
 /// Returns the web service base URL used when the instance configuration omits
@@ -224,29 +221,6 @@ fn check_language(value: &str, setting: &str) -> Result<String, String> {
     }
 }
 
-/// Checks a configured ListenBrainz token and returns it trimmed.
-///
-/// # Parameters
-///
-/// - `value`: the configured token.
-///
-/// # Returns
-///
-/// The token, trimmed.
-///
-/// # Errors
-///
-/// Returns a message when the token carries a control character: the token
-/// travels in an `Authorization` header, and a line break in a header value
-/// would split the request.
-fn check_token(value: &str) -> Result<String, String> {
-    if value.chars().any(char::is_control) {
-        return Err("listenbrainzToken must not contain control characters".to_string());
-    }
-
-    Ok(value.trim().to_string())
-}
-
 /// Reads this instance's configuration.
 ///
 /// # Returns
@@ -295,26 +269,6 @@ fn base_url(config: &Config) -> Result<String, ProviderError> {
 /// absolute `http` or `https` URL.
 fn artwork_base_url(config: &Config) -> Result<String, ProviderError> {
     check_url(&config.artwork_base_url, "artworkBaseUrl").map_err(ProviderError::InvalidConfig)
-}
-
-/// Returns the ListenBrainz token of one configuration.
-///
-/// # Parameters
-///
-/// - `config`: the instance configuration.
-///
-/// # Returns
-///
-/// The configured token, trimmed, and the empty string when the instance has
-/// none. The popularity API that names an artist's top tracks requires a token,
-/// so an empty value makes the plugin omit top tracks rather than fail.
-///
-/// # Errors
-///
-/// Returns [`ProviderError::InvalidConfig`] when the token carries a control
-/// character, which no header value may.
-fn listenbrainz_token(config: &Config) -> Result<String, ProviderError> {
-    check_token(&config.listenbrainz_token).map_err(ProviderError::InvalidConfig)
 }
 
 /// Returns the Wikipedia language of one configuration.
@@ -373,10 +327,6 @@ fn validate_config(server_config: &str) -> Result<(), Vec<String>> {
         errors.push(error);
     }
 
-    if let Err(error) = check_token(&config.listenbrainz_token) {
-        errors.push(error);
-    }
-
     if errors.is_empty() {
         Ok(())
     } else {
@@ -421,7 +371,7 @@ impl CatalogGuest for MusicBrainzMetadata {
     fn get_album(id: String) -> Result<Album, ProviderError> {
         debug!("get-album for {id}");
 
-        catalog::get_album(&base_url(&config()?)?, &id)
+        catalog::get_album(&base_url(&config()?)?, &cache::InstanceStore, &id)
     }
 
     fn get_artist(id: String) -> Result<Artist, ProviderError> {
@@ -452,9 +402,7 @@ impl CatalogGuest for MusicBrainzMetadata {
     fn artist_top_tracks(id: String, limit: u32) -> Result<Vec<Track>, ProviderError> {
         debug!("artist-top-tracks for {id}, limit {limit}");
 
-        let config = config()?;
-
-        catalog::artist_top_tracks(&id, limit, &listenbrainz_token(&config)?)
+        catalog::artist_top_tracks(&id, limit)
     }
 
     fn lookup_isrc(isrc: String) -> Result<Vec<Track>, ProviderError> {
@@ -466,7 +414,7 @@ impl CatalogGuest for MusicBrainzMetadata {
     fn lookup_album(ids: Vec<IdPair>) -> Result<Vec<AlbumRef>, ProviderError> {
         debug!("lookup-album for {} ids", ids.len());
 
-        catalog::lookup_album(&base_url(&config()?)?, &ids)
+        catalog::lookup_album(&base_url(&config()?)?, &cache::InstanceStore, &ids)
     }
 }
 
@@ -488,7 +436,7 @@ impl MetadataGuest for MusicBrainzMetadata {
     fn get_release(ids: Vec<IdPair>) -> Result<Album, ProviderError> {
         debug!("get-release for {} ids", ids.len());
 
-        metadata::get_release(&base_url(&config()?)?, &ids)
+        metadata::get_release(&base_url(&config()?)?, &cache::InstanceStore, &ids)
     }
 
     /// Looks the requested artist up in the MusicBrainz artist index.
@@ -596,34 +544,11 @@ mod tests {
             Ok(())
         );
         assert_eq!(
-            validate_config(r#"{"listenbrainzToken":"0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"}"#),
+            validate_config(
+                r#"{"artworkBaseUrl":"https://archive.example/","wikipediaLanguage":"en"}"#
+            ),
             Ok(())
         );
-    }
-
-    #[test]
-    fn an_empty_listenbrainz_token_is_the_default() {
-        assert_eq!(check_token(""), Ok(String::new()));
-        assert_eq!(check_token("  token  "), Ok("token".to_string()));
-
-        let config = Config {
-            base_url: default_base_url(),
-            artwork_base_url: default_artwork_base_url(),
-            wikipedia_language: default_wikipedia_language(),
-            listenbrainz_token: String::new(),
-        };
-
-        assert!(matches!(listenbrainz_token(&config), Ok(token) if token.is_empty()));
-    }
-
-    #[test]
-    fn a_token_that_would_split_a_header_is_refused() {
-        let errors =
-            validate_config("{\"listenbrainzToken\":\"token\\r\\nX-Evil: 1\"}").unwrap_err();
-
-        assert_eq!(errors.len(), 1);
-        assert!(errors[0].contains("listenbrainzToken"), "{}", errors[0]);
-        assert!(check_token("a\tb").is_err());
     }
 
     #[test]

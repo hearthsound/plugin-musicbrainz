@@ -945,32 +945,49 @@ pub fn recording_track(
 
 /// Converts an entry of an artist's popularity list into a catalog track.
 ///
+/// ListenBrainz reports a collaboration as one entry whose credit names every
+/// artist - `alt-J feat. Mountain Man` arrives with both artists' MusicBrainz
+/// ids beside one name. One credit names one artist, so an entry that lists
+/// another artist beside the one whose list this is resolves to nothing: its
+/// recording is still in the list, and giving it this artist's credit would make
+/// the page claim a recording that does not carry it.
+///
 /// # Parameters
 ///
 /// - `entry`: the entry as ListenBrainz returned it.
+/// - `artist_mbid`: the MusicBrainz id of the artist whose list this is.
 ///
 /// # Returns
 ///
-/// The track with the recording as its id, the recording's title, the artist the
-/// list names, the recording's length as its duration, the `mb-recording` id
-/// and, when ListenBrainz named the release the recording is played from, the
-/// reference of that release. A track without a release stays without an album,
-/// because ListenBrainz does not know every release a recording appears on.
+/// The track with the recording as its id, the recording's title, the `mb-recording`
+/// id, the credit of the artist asked about and, when ListenBrainz named the
+/// release the recording is played from, the reference of that release. `None`
+/// when the entry credits other artists beside the one asked about or credits
+/// nobody with a MusicBrainz id.
 ///
 /// # Example
 ///
 /// ```text
-/// popularity_track(&entry)
-///   -> Track { id: "13dd61c7-...", title: "Closer", album: Some(AlbumRef { id: "ba8701ba-...", .. }), .. }
+/// popularity_track(&entry, "fc7bbf00-fbaa-4736-986b-b3ac0266ca9b")
+///   -> Some(Track { id: "13dd61c7-...", title: "Breezeblocks", .. })
 /// ```
-pub fn popularity_track(entry: &listenbrainz::RecordingPopularity) -> ProviderTrack {
+pub fn popularity_track(
+    entry: &listenbrainz::RecordingPopularity,
+    artist_mbid: &str,
+) -> Option<ProviderTrack> {
+    if entry.artist_mbids.len() != 1 || entry.artist_mbids[0] != artist_mbid {
+        debug!(
+            "popularity entry {} credits {:?}, not {}",
+            entry.recording_mbid, entry.artist_mbids, artist_mbid
+        );
+
+        return None;
+    }
+
+    // The entry's own name is the artist's name when the entry names one artist.
     let artists = vec![ProviderArtistCredit {
         name: entry.artist_name.clone(),
-        ids: entry
-            .artist_mbids
-            .iter()
-            .map(|mbid| id_pair(NS_ARTIST, mbid))
-            .collect(),
+        ids: vec![id_pair(NS_ARTIST, artist_mbid)],
     }];
 
     let album = match (&entry.release_mbid, &entry.release_name) {
@@ -988,7 +1005,7 @@ pub fn popularity_track(entry: &listenbrainz::RecordingPopularity) -> ProviderTr
         _ => None,
     };
 
-    ProviderTrack {
+    Some(ProviderTrack {
         id: entry.recording_mbid.clone(),
         title: entry.recording_name.clone(),
         artists,
@@ -999,7 +1016,7 @@ pub fn popularity_track(entry: &listenbrainz::RecordingPopularity) -> ProviderTr
         isrc: None,
         explicit: None,
         ids: vec![id_pair(NS_RECORDING, &entry.recording_mbid)],
-    }
+    })
 }
 
 /// Widths of the Cover Art Archive renditions of a front cover.
@@ -1675,14 +1692,14 @@ mod tests {
         let entries: Vec<listenbrainz::RecordingPopularity> =
             serde_json::from_str(include_str!("fixtures/artist_popularity.json")).unwrap();
 
-        let first = popularity_track(&entries[0]);
+        let first = popularity_track(&entries[0], NINE_INCH_NAILS).expect("one artist answers");
         assert_eq!(first.id, "13dd61c7-ce73-4e97-9f0c-9f0e53144411");
         assert_eq!(first.title, "Closer");
         assert_eq!(first.duration_ms, Some(373_133));
         assert_eq!(first.artists[0].name, "Nine Inch Nails");
         assert_eq!(
             id_pairs(&first.artists[0].ids),
-            vec![("mb-artist", "b7ffd2af-418f-4be2-bdd1-22f8b48613da")]
+            vec![("mb-artist", NINE_INCH_NAILS)]
         );
         let album = first.album.as_ref().unwrap();
         assert_eq!(album.id, "ba8701ba-dc7c-4bca-9c83-846ee8c3d576");
@@ -1692,10 +1709,38 @@ mod tests {
             vec![("mb-release", album.id.as_str())]
         );
 
-        let second = popularity_track(&entries[1]);
-        assert!(second.album.is_none());
+        let second = popularity_track(&entries[1], NINE_INCH_NAILS).unwrap();
+        assert!(second.album.is_none(), "the entry names no release");
         assert_eq!(second.isrc, None);
     }
+
+    #[test]
+    fn a_collaboration_entry_is_not_credited_to_one_of_its_artists() {
+        // ListenBrainz reports a collaboration as one entry whose credit names
+        // every artist - the shape that gave one row two MusicBrainz ids.
+        let entry: listenbrainz::RecordingPopularity = serde_json::from_value(serde_json::json!({
+            "recording_mbid": "13dd61c7-ce73-4e97-9f0c-9f0e53144411",
+            "recording_name": "Buffalo",
+            "artist_name": "alt-J feat. Mountain Man",
+            "artist_mbids": [ALT_J, MOUNTAIN_MAN],
+        }))
+        .unwrap();
+
+        assert!(
+            popularity_track(&entry, ALT_J).is_none(),
+            "one credit cannot name two artists"
+        );
+    }
+
+    /// The MusicBrainz id of Nine Inch Nails, the artist of the fixture's list.
+    const NINE_INCH_NAILS: &str = "b7ffd2af-418f-4be2-bdd1-22f8b48613da";
+
+    /// The MusicBrainz id of alt-J.
+    const ALT_J: &str = "fc7bbf00-fbaa-4736-986b-b3ac0266ca9b";
+
+    /// The MusicBrainz id of Mountain Man, which one ListenBrainz entry pairs
+    /// with alt-J's.
+    const MOUNTAIN_MAN: &str = "ecc6e248-9ec4-4150-bbd2-d2b112f0b365";
 
     #[test]
     fn relation_types_without_a_link_kind_are_dropped() {

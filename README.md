@@ -74,13 +74,11 @@ cargo test
 | `baseUrl` | `https://musicbrainz.org/ws/2/` | Base URL of the MusicBrainz web service. Point it at a mirror to keep traffic off `musicbrainz.org`. |
 | `artworkBaseUrl` | `https://coverartarchive.org/` | Base URL of the Cover Art Archive. Point it at a mirror to keep traffic off `coverartarchive.org`. |
 | `wikipediaLanguage` | `en` | Language code of the Wikipedia edition artist biographies are read from, for example `de` or `pt`. |
-| `listenbrainzToken` | empty | Token of a ListenBrainz account, sent as `Authorization: Token <token>` when the artist's top tracks are read. Without one the plugin omits top tracks. |
 
 A base URL that does not end in a slash is normalized to one, so the endpoint
 paths the plugin appends always land on the service root. A language code must
-be two or three lowercase letters. The ListenBrainz token is stored with the
-instance's secrets, is never read back by the server, and may not contain a
-control character, which no header value may.
+be two or three lowercase letters. No setting is a secret: every service the
+plugin reads is public, so the instance needs no account and no token.
 
 The manifest grants the plugin `musicbrainz.org`, the Cover Art Archive,
 `archive.org` and its subdomains, Wikidata, any Wikipedia edition, Wikimedia
@@ -129,10 +127,10 @@ the next `get-artist` reports it.
 `artist-top-tracks` reads the artist's most played recordings from
 `GET https://api.listenbrainz.org/1/popularity/top-recordings-for-artist/{mbid}`
 and slices the list to the caller's limit. A recording ListenBrainz does not tie
-to a release is reported without an album. That endpoint answers only for a
-ListenBrainz account, so the request carries `Authorization: Token <token>` from
-the instance's `listenbrainzToken`; an instance without a token reports no top
-tracks rather than an error, and a refused token is reported as `Unauthorized`.
+to a release is reported without an album. The endpoint answers anonymously, so
+the request carries no credentials. ListenBrainz reports a collaboration as one
+entry crediting every artist, and one credit names one artist, so an entry that
+credits more than the artist whose list it is answers nothing.
 
 `lookup-isrc` resolves an ISRC to the recordings assigned to it, and
 `lookup-album` resolves canonical ids to the albums the web service holds: an
@@ -259,8 +257,8 @@ reported.
   the smallest request the web service serves.
 - A hint without a title is not searchable and resolves to no matches; that is
   an empty result, not an error.
-- An instance without a `listenbrainzToken` reports no top tracks instead of a
-  failure, because ListenBrainz's popularity API answers only for an account.
+- A release or artist body is cached for an hour, because one page asks for the
+  same entity several times and the web service allows one request per second.
 - The module-level log macros are no-ops on the host target, which has no
   `host-log` import, so the unit tests exercise the same code the component runs.
 
