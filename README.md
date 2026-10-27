@@ -46,7 +46,7 @@ Then validate the manifest and the component:
 hsplugin check
 ```
 
-It prints `ok: app.hearthsound.musicbrainz 0.5.1 (provides catalog, metadata,
+It prints `ok: app.hearthsound.musicbrainz 0.5.2 (provides catalog, metadata,
 artwork)` on success.
 
 Finally, build the archive you install on a server:
@@ -55,7 +55,7 @@ Finally, build the archive you install on a server:
 hsplugin pack --out-dir dist
 ```
 
-`dist/app.hearthsound.musicbrainz-0.5.1.hsplugin` contains the manifest and the
+`dist/app.hearthsound.musicbrainz-0.5.2.hsplugin` contains the manifest and the
 component.
 
 ## Tests
@@ -83,9 +83,10 @@ instance's secrets, is never read back by the server, and may not contain a
 control character, which no header value may.
 
 The manifest grants the plugin `musicbrainz.org`, the Cover Art Archive,
-`archive.org`, Wikidata, any Wikipedia edition, Wikimedia Commons,
-`upload.wikimedia.org` and `api.listenbrainz.org`, plus whichever hosts the two
-URL settings name.
+`archive.org` and its subdomains, Wikidata, any Wikipedia edition, Wikimedia
+Commons, `thumb.wikimedia.org` (the host a portrait redirects to for its
+resized rendition), `upload.wikimedia.org` and `api.listenbrainz.org`, plus
+whichever hosts the two URL settings name.
 
 MusicBrainz publishes an average of one request per second, so the manifest
 gives `musicbrainz.org` and the configured `baseUrl` a limit of one request per

@@ -837,6 +837,32 @@ pub fn artist(
 /// asks for from it, so the plugin declares the width a portrait page draws.
 const PORTRAIT_WIDTH: u32 = 1200;
 
+/// Hosts the recorded redirect chain of a portrait passes through.
+///
+/// Recorded with `curl -sIL` on the URL [`commons_portrait`] builds, whose
+/// path is `/wiki/Special:FilePath/<file>?width=1200` on
+/// `commons.wikimedia.org`: Commons answers `302` to its own redirect
+/// endpoint, which answers `301` to `thumb.wikimedia.org`, which serves the
+/// resized file. The thumbnail host is a host of its own rather than a
+/// subdomain of the Commons host, so a manifest that allows only
+/// `commons.wikimedia.org` cannot fetch a single portrait; the manifest names
+/// both, and the unit test of the crate holds them together.
+pub const PORTRAIT_REDIRECT_HOSTS: &[&str] = &["commons.wikimedia.org", "thumb.wikimedia.org"];
+
+/// Hosts the recorded redirect chain of a cover passes through.
+///
+/// Recorded with `curl -sIL` on the URL [`release_images`] builds, whose path
+/// is `/release/<mbid>/front-250` on `coverartarchive.org`: the archive answers
+/// `307` to `archive.org`, which answers `302` to the storage node that serves
+/// the file (`dn710906.ca.archive.org` for the release recorded here, a
+/// different node per item). The manifest allows `archive.org` and its
+/// subdomains, which covers every node the redirect can name.
+pub const COVER_REDIRECT_HOSTS: &[&str] = &[
+    "coverartarchive.org",
+    "archive.org",
+    "dn710906.ca.archive.org",
+];
+
 /// Builds the Wikimedia Commons rendition of an artist's portrait.
 ///
 /// # Parameters

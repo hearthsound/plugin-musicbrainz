@@ -706,6 +706,101 @@ mod tests {
     }
 
     #[test]
+    fn the_manifest_allows_every_host_of_the_recorded_redirect_chains() {
+        let manifest: serde_json::Value =
+            serde_json::from_str(include_str!("../manifest.json")).unwrap();
+        let allowed = manifest_hosts(&manifest);
+
+        for host in map::COVER_REDIRECT_HOSTS
+            .iter()
+            .chain(map::PORTRAIT_REDIRECT_HOSTS)
+        {
+            assert!(
+                allowed.iter().any(|entry| host_entry_allows(entry, host)),
+                "the manifest must allow `{host}`, it allows {allowed:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_manifest_host_entry_matches_the_way_the_host_matches_it() {
+        // The host compares a wildcard as a suffix with at least one label in
+        // front of it, a literal case-insensitively, and a `$config:` entry as
+        // whatever its setting resolves to, which no recorded host can claim.
+        assert!(host_entry_allows(
+            "commons.wikimedia.org",
+            "commons.wikimedia.org"
+        ));
+        assert!(host_entry_allows("archive.org", "archive.org"));
+        assert!(!host_entry_allows("*.archive.org", "archive.org"));
+        assert!(host_entry_allows(
+            "*.archive.org",
+            "dn710906.ca.archive.org"
+        ));
+        assert!(!host_entry_allows("*.archive.org", "example.org"));
+        assert!(!host_entry_allows("archive.org", "dn710906.ca.archive.org"));
+        assert!(!host_entry_allows("$config:baseUrl", "musicbrainz.org"));
+        assert!(!host_entry_allows(
+            "$config:artworkBaseUrl",
+            "thumb.wikimedia.org"
+        ));
+    }
+
+    /// Returns the host entries of a manifest.
+    ///
+    /// An entry is either a plain host or an object with a `host` member and a
+    /// per-host rate limit.
+    ///
+    /// # Parameters
+    ///
+    /// - `manifest`: the parsed manifest.
+    ///
+    /// # Returns
+    ///
+    /// The entries, in manifest order.
+    fn manifest_hosts(manifest: &serde_json::Value) -> Vec<String> {
+        manifest["permissions"]["http"]["hosts"]
+            .as_array()
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(|entry| match entry {
+                        serde_json::Value::String(host) => Some(host.clone()),
+                        other => other["host"].as_str().map(str::to_string),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Returns whether one manifest host entry allows a host.
+    ///
+    /// # Parameters
+    ///
+    /// - `entry`: the manifest entry, as written.
+    /// - `host`: the host to test.
+    ///
+    /// # Returns
+    ///
+    /// `true` when the entry names the host exactly, ignoring case, and when it
+    /// is a `*.` wildcard whose domain is a suffix of the host with at least one
+    /// label in front of it. A `$config:` entry allows nothing here, because
+    /// what it resolves to is the administrator's setting.
+    fn host_entry_allows(entry: &str, host: &str) -> bool {
+        if let Some(domain) = entry.strip_prefix("*.") {
+            return host
+                .strip_suffix(domain)
+                .is_some_and(|prefix| prefix.ends_with('.'));
+        }
+
+        if entry.starts_with("$config:") {
+            return false;
+        }
+
+        entry.eq_ignore_ascii_case(host)
+    }
+
+    #[test]
     fn the_default_wikipedia_language_is_english() {
         assert_eq!(default_wikipedia_language(), "en");
         assert_eq!(

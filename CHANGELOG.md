@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-27
+
+### Fixed
+
+- The manifest allows `thumb.wikimedia.org`, the host a portrait URL redirects
+  to. `Special:FilePath` on Commons answers a redirect to the thumbnail host,
+  which is a host of its own rather than a subdomain of `commons.wikimedia.org`,
+  so the host refused every portrait download with a `host-http` denial. The
+  recorded redirect chains of a portrait and of a cover are now constants of the
+  crate, and a unit test holds the manifest's host entries to them.
+
 ## [0.5.1] - 2026-10-27
 
 ### Added
@@ -123,7 +134,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A CI workflow that formats, lints, tests, builds, checks and packs the
   plugin, and uploads the archive.
 
-[Unreleased]: https://github.com/hearthsound/plugin-musicbrainz/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/hearthsound/plugin-musicbrainz/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/hearthsound/plugin-musicbrainz/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/hearthsound/plugin-musicbrainz/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/hearthsound/plugin-musicbrainz/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/hearthsound/plugin-musicbrainz/compare/v0.3.0...v0.4.0
