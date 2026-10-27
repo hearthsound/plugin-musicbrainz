@@ -146,11 +146,38 @@ pub(crate) fn get_json_at<T: DeserializeOwned>(endpoint: &str) -> Result<T, Prov
     send_json(request(endpoint))
 }
 
+/// Builds the GET request of the ListenBrainz popularity endpoint.
+///
+/// The endpoint is not public any more: it answers every anonymous request with
+/// `401` ("you need to provide an Auth token"), which is why the token is not
+/// optional here. A plugin instance without one does not ask at all - see
+/// [`crate::catalog::artist_top_tracks`] - so this returns `None` rather than a
+/// request that is certain to be refused.
+///
+/// # Parameters
+///
+/// - `endpoint`: the absolute URL of the endpoint, already query-encoded.
+/// - `token`: the configured ListenBrainz token, trimmed; an empty one is no
+///   token.
+///
+/// # Returns
+///
+/// The request, carrying the plugin's request timeout and `Authorization: Token
+/// <token>`, or `None` when no usable token is configured.
+pub(crate) fn popularity_request(endpoint: &str, token: Option<&str>) -> Option<Request> {
+    let token = token.map(str::trim).filter(|token| !token.is_empty())?;
+    let mut request = request(endpoint);
+    request
+        .headers
+        .push(("authorization".to_owned(), format!("Token {token}")));
+
+    Some(request)
+}
+
 /// Builds the GET request of one endpoint without sending it.
 ///
-/// A caller that has to label its request - the ListenBrainz popularity API
-/// wants an `Authorization` header - adds the headers to the returned request
-/// and sends it with [`send_json`].
+/// A caller that has to label its request adds the headers to the returned
+/// request and sends it with [`send_json`].
 ///
 /// # Parameters
 ///

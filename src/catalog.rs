@@ -405,28 +405,35 @@ pub fn artist_albums(
     Ok(answered)
 }
 
-/// Reads the most played recordings of an artist.
+/// Reads the most played recordings of an artist from ListenBrainz.
 ///
-/// ListenBrainz answers its popularity endpoint for anyone who asks, so the
-/// plugin needs no account and no token: the list is the one ListenBrainz counts
-/// for its listeners, whoever they are.
+/// The popularity endpoint is not public: ListenBrainz answers every anonymous
+/// request with `401` and a message saying a token is needed. An instance without
+/// a configured token therefore asks nothing at all - an artist page whose
+/// top-tracks question no instance can answer is a page that never settles - and
+/// the catalog layer's other instances answer the question instead.
 ///
 /// # Parameters
 ///
 /// - `id`: MusicBrainz artist id.
 /// - `limit`: number of tracks to answer.
+/// - `token`: the configured ListenBrainz token, if any; blank counts as none.
 ///
 /// # Returns
 ///
 /// The tracks ListenBrainz ranks highest for the artist, in its order, sliced to
-/// `limit`. A zero limit answers nothing without a request.
+/// `limit`. A zero limit, or no token, answers nothing without a request.
 ///
 /// # Errors
 ///
 /// Returns the provider error of the request. An entry that names another
 /// artist beside the one asked about is dropped rather than misattributed; see
 /// [`map::popularity_track`].
-pub fn artist_top_tracks(id: &str, limit: u32) -> Result<Vec<Track>, ProviderError> {
+pub fn artist_top_tracks(
+    id: &str,
+    limit: u32,
+    token: Option<&str>,
+) -> Result<Vec<Track>, ProviderError> {
     if limit == 0 {
         debug!("no popularity list: no room to answer one");
 
@@ -437,7 +444,12 @@ pub fn artist_top_tracks(id: &str, limit: u32) -> Result<Vec<Track>, ProviderErr
         url::LISTENBRAINZ_BASE_URL,
         &paths::listenbrainz_top_recordings_path(id),
     );
-    let entries: Vec<listenbrainz::RecordingPopularity> = api::send_json(api::request(&endpoint))?;
+    let Some(request) = api::popularity_request(&endpoint, token) else {
+        debug!("no popularity list: the instance has no ListenBrainz token");
+
+        return Ok(Vec::new());
+    };
+    let entries: Vec<listenbrainz::RecordingPopularity> = api::send_json(request)?;
     debug!("popularity list held {} recordings", entries.len());
 
     Ok(entries
@@ -753,14 +765,14 @@ mod tests {
             .is_empty()
         );
         assert!(
-            artist_top_tracks("69158f97-4c07-4c4e-baf8-4e4ab1ed666e", 0)
+            artist_top_tracks("69158f97-4c07-4c4e-baf8-4e4ab1ed666e", 0, Some("token"))
                 .unwrap()
                 .is_empty()
         );
     }
 
     #[test]
-    fn a_popularity_request_needs_no_credentials() {
+    fn an_anonymous_popularity_request_is_not_made() {
         let entries: Vec<listenbrainz::RecordingPopularity> =
             serde_json::from_str(include_str!("fixtures/artist_popularity.json")).unwrap();
         assert_eq!(entries.len(), 2, "the fixture holds the popularity list");
@@ -769,19 +781,36 @@ mod tests {
             url::LISTENBRAINZ_BASE_URL,
             &paths::listenbrainz_top_recordings_path("69158f97-4c07-4c4e-baf8-4e4ab1ed666e"),
         );
-        let request = api::request(&endpoint);
 
+        assert!(
+            api::popularity_request(&endpoint, None).is_none(),
+            "ListenBrainz answers an anonymous popularity request with 401, so it is not sent"
+        );
+        assert!(
+            api::popularity_request(&endpoint, Some("  ")).is_none(),
+            "a blank token is no token"
+        );
+
+        let request = api::popularity_request(&endpoint, Some("token")).expect("a token sends it");
         assert_eq!(request.method, "GET");
         assert_eq!(
             request.url,
             "https://api.listenbrainz.org/1/popularity/top-recordings-for-artist/69158f97-4c07-4c4e-baf8-4e4ab1ed666e"
         );
-        assert!(
-            request.headers.is_empty(),
-            "the endpoint is public, so no header is sent"
+        assert_eq!(
+            request.headers,
+            vec![("authorization".to_owned(), "Token token".to_owned())],
+            "the token is sent as the endpoint requires"
         );
         assert_eq!(request.body, None);
         assert!(request.timeout_ms.is_some(), "the budget is set");
+
+        assert!(
+            artist_top_tracks("69158f97-4c07-4c4e-baf8-4e4ab1ed666e", 100, None)
+                .unwrap()
+                .is_empty(),
+            "an instance without a token asks nothing"
+        );
     }
 
     #[test]

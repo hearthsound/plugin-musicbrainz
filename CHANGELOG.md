@@ -5,15 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Removed
-
-- The `listenbrainzToken` instance setting. The popularity endpoint that names
-  an artist's top tracks answers anonymously, so the token was never needed and
-  the instance form asked for an account that no endpoint requires.
+## [0.5.4] - 2026-10-27
 
 ### Added
+
+- The `listenbrainzToken` instance setting, now optional. ListenBrainz started
+  answering its popularity endpoints with `401` and "you need to provide an Auth
+  token", so the artist's top songs stopped arriving. An instance with a token
+  sends it as `Authorization: Token <token>`; an instance without one sends no
+  request at all, and the catalog layer's other instances answer the question
+  instead of the artist page waiting forever for an answer that never comes.
+
+### Changed
 
 - Release and artist lookups are cached for an hour, keyed by their request
   path. One page asks for the same release and artist several times, and the web

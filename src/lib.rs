@@ -147,6 +147,9 @@ struct Config {
     /// Wikipedia language biographies are read from.
     #[serde(default = "default_wikipedia_language")]
     wikipedia_language: String,
+    /// The optional ListenBrainz token popularity endpoints are read with.
+    #[serde(default)]
+    listenbrainz_token: Option<String>,
 }
 
 /// Returns the web service base URL used when the instance configuration omits
@@ -402,7 +405,12 @@ impl CatalogGuest for MusicBrainzMetadata {
     fn artist_top_tracks(id: String, limit: u32) -> Result<Vec<Track>, ProviderError> {
         debug!("artist-top-tracks for {id}, limit {limit}");
 
-        catalog::artist_top_tracks(&id, limit)
+        let config = config()?;
+        catalog::artist_top_tracks(
+            &id,
+            limit,
+            config.listenbrainz_token.as_deref().map(str::trim),
+        )
     }
 
     fn lookup_isrc(isrc: String) -> Result<Vec<Track>, ProviderError> {

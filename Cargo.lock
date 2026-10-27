@@ -173,7 +173,7 @@ dependencies = [
 
 [[package]]
 name = "hearthsound-plugin-musicbrainz"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "hearthsound-plugin",
  "serde",

@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "app.hearthsound.musicbrainz",
   "name": "MusicBrainz metadata",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "Search, resolve and illustrate music from the MusicBrainz web service, without an account or an API key.",
   "authors": [
     "Hearthsound contributors"
@@ -78,6 +78,12 @@
             "title": "Wikipedia language",
             "description": "Language code of the Wikipedia edition artist biographies are read from, for example en, de or pt. An artist whose Wikidata item has no page in this edition falls back to the English one.",
             "default": "en"
+          },
+          "listenbrainzToken": {
+            "type": "string",
+            "title": "ListenBrainz token",
+            "description": "Optional. ListenBrainz asks for a token on its popularity endpoints, which is where an artist page's top songs come from; without one this instance does not ask, and the catalog layer's other instances answer instead. A token is free from listenbrainz.org.",
+            "default": ""
           }
         }
       },
@@ -95,6 +101,13 @@
           {
             "type": "Control",
             "scope": "#/properties/wikipediaLanguage"
+          },
+          {
+            "type": "Control",
+            "scope": "#/properties/listenbrainzToken",
+            "options": {
+              "widget": "password"
+            }
           }
         ]
       }
