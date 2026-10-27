@@ -9,6 +9,21 @@ pub const DEFAULT_BASE_URL: &str = "https://musicbrainz.org/ws/2/";
 /// Base URL of the Cover Art Archive.
 pub const DEFAULT_ARTWORK_BASE_URL: &str = "https://coverartarchive.org/";
 
+/// Base URL of the ListenBrainz popularity API.
+///
+/// The instance configuration does not move it: the popularity endpoint is not
+/// part of the MusicBrainz web service and has no mirror to point at.
+pub const LISTENBRAINZ_BASE_URL: &str = "https://api.listenbrainz.org";
+
+/// Base URL of Wikidata.
+pub const WIKIDATA_BASE_URL: &str = "https://www.wikidata.org";
+
+/// Base URL of Wikimedia Commons.
+pub const COMMONS_BASE_URL: &str = "https://commons.wikimedia.org";
+
+/// Wikipedia language biographies are read from when the instance omits one.
+pub const DEFAULT_WIKIPEDIA_LANGUAGE: &str = "en";
+
 /// Returns whether `value` is an absolute `http` or `https` URL.
 ///
 /// The check is deliberately structural rather than a full URL parse: it
@@ -142,6 +157,112 @@ pub fn encode_component(value: &str) -> String {
 /// Uppercase hexadecimal digits used by [`encode_component`].
 const HEX_DIGITS: [u8; 16] = *b"0123456789ABCDEF";
 
+/// Returns the base URL of one Wikipedia edition.
+///
+/// # Parameters
+///
+/// - `language`: the edition's language code, for example `en` or `de`.
+///
+/// # Returns
+///
+/// The edition's base URL, without a trailing slash.
+///
+/// # Example
+///
+/// ```text
+/// wikipedia_base_url("en") -> "https://en.wikipedia.org"
+/// wikipedia_base_url("de") -> "https://de.wikipedia.org"
+/// ```
+pub fn wikipedia_base_url(language: &str) -> String {
+    format!("https://{language}.wikipedia.org")
+}
+
+/// Returns the URL of a Wikipedia page.
+///
+/// # Parameters
+///
+/// - `language`: language code of the edition.
+/// - `title`: page title as the edition spells it, with spaces.
+///
+/// # Returns
+///
+/// The page URL, with the title's spaces written as underscores and every other
+/// reserved character escaped.
+///
+/// # Example
+///
+/// ```text
+/// wikipedia_page_url("en", "Boards of Canada") -> "https://en.wikipedia.org/wiki/Boards_of_Canada"
+/// ```
+pub fn wikipedia_page_url(language: &str, title: &str) -> String {
+    format!(
+        "{}/wiki/{}",
+        wikipedia_base_url(language),
+        encode_component(&title.replace(' ', "_"))
+    )
+}
+
+/// Decodes the percent escapes of one URL component.
+///
+/// A value that is not an escape sequence is kept as it is, and a decoded byte
+/// run that is not UTF-8 is replaced character by character, so an unusual page
+/// title still yields a usable string.
+///
+/// # Parameters
+///
+/// - `value`: the encoded component.
+///
+/// # Returns
+///
+/// The decoded component.
+///
+/// # Example
+///
+/// ```text
+/// percent_decode("Boards_of_Canada")        -> "Boards_of_Canada"
+/// percent_decode("Sigur%20R%C3%B3s")        -> "Sigur R\u{f3}s"
+/// percent_decode("100%")                    -> "100%"
+/// ```
+pub fn percent_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && index + 2 < bytes.len()
+            && let (Some(high), Some(low)) =
+                (hex_value(bytes[index + 1]), hex_value(bytes[index + 2]))
+        {
+            decoded.push(high << 4 | low);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+/// Returns the value of one hexadecimal digit.
+///
+/// # Parameters
+///
+/// - `byte`: the ASCII byte to read.
+///
+/// # Returns
+///
+/// The digit's value, or `None` when the byte is not a hexadecimal digit.
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
 /// Normalizes an ISRC to the form the web service keys recordings by.
 ///
 /// Hints carry ISRCs as they were written into the tags of a file, which is
@@ -268,6 +389,31 @@ mod tests {
             encode_component("Boards of Canada - Roygbiv"),
             "Boards%20of%20Canada%20-%20Roygbiv"
         );
+    }
+
+    #[test]
+    fn a_wikipedia_page_url_writes_spaces_as_underscores() {
+        assert_eq!(
+            wikipedia_base_url("en"),
+            "https://en.wikipedia.org".to_string()
+        );
+        assert_eq!(
+            wikipedia_page_url("en", "Boards of Canada"),
+            "https://en.wikipedia.org/wiki/Boards_of_Canada"
+        );
+        assert_eq!(
+            wikipedia_page_url("de", "Sigur R\u{f3}s"),
+            "https://de.wikipedia.org/wiki/Sigur_R%C3%B3s"
+        );
+    }
+
+    #[test]
+    fn percent_decoding_reads_escapes_and_keeps_the_rest() {
+        assert_eq!(percent_decode("Boards_of_Canada"), "Boards_of_Canada");
+        assert_eq!(percent_decode("Sigur%20R%C3%B3s"), "Sigur R\u{f3}s");
+        assert_eq!(percent_decode("100%"), "100%");
+        assert_eq!(percent_decode("%zz"), "%zz");
+        assert_eq!(percent_decode(""), "");
     }
 
     #[test]

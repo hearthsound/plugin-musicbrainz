@@ -1,0 +1,35 @@
+{
+  "id": "1d7d2318-8ac2-34d5-bd5b-ca7aad59e4ba",
+  "title": "Geogaddi",
+  "date": "2002-02-18",
+  "status": "Official",
+  "barcode": "801061810122",
+  "disambiguation": "limited edition",
+  "artist-credit": [
+    {
+      "joinphrase": "",
+      "artist": {
+        "name": "Boards of Canada",
+        "id": "69158f97-4c07-4c4e-baf8-4e4ab1ed666e",
+        "sort-name": "Boards of Canada",
+        "type": "Group",
+        "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+        "country": "GB",
+        "disambiguation": "Scottish electronic duo"
+      },
+      "name": "Boards of Canada"
+    }
+  ],
+  "media": [
+    {
+      "position": 1,
+      "track-count": 23
+    }
+  ],
+  "release-group": {
+    "id": "8183834a-6c8a-39ef-a7bc-a82f79b929e9",
+    "title": "Geogaddi",
+    "primary-type": "Album",
+    "secondary-types": []
+  }
+}

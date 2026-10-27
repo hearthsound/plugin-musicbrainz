@@ -1,25 +1,33 @@
-//! The artwork operations: one Cover Art Archive lookup per album subject.
+//! The artwork operations: cover art for albums, portraits for artists.
 //!
-//! The plugin answers the artwork interface with the URLs of an album's front
-//! cover renditions rather than with image bytes, because the server fetches
-//! an image through the instance that named it. Which renditions a subject has
-//! depends on what it carries: a release or a release group id names them
-//! directly, and a barcode or an album title has to be looked up in the web
-//! service first.
+//! The plugin answers the artwork interface with the URLs of an image's
+//! renditions rather than with image bytes, because the server fetches an image
+//! through the instance that named it.
 //!
-//! A lookup result is cached in the instance's key-value store, because an
-//! album grid asks for the same covers again and again while a search of the
-//! index is the slowest request the plugin makes. The cache key is a digest of
-//! the whole subject, so a result is reused for exactly the subject that
-//! produced it, and a subject that names a release by id never reaches the
-//! cache at all, because its renditions cost no request.
+//! An album's cover comes from the Cover Art Archive. Which renditions it has
+//! depends on what the subject carries: a release or a release group id names
+//! them directly, and a barcode or an album title has to be looked up in the web
+//! service first. A lookup result is cached in the instance's key-value store,
+//! because an album grid asks for the same covers again and again while a
+//! search of the index is the slowest request the plugin makes.
+//!
+//! An artist's portrait comes from Wikimedia Commons: MusicBrainz links the
+//! artist to Wikidata, Wikidata names the portrait with property `P18`, and
+//! Commons serves that file at any width. The Wikidata answer is cached, so a
+//! page that draws a portrait per album artist costs one request per artist.
+//!
+//! The cache key of an album subject is a digest of the whole subject, so a
+//! result is reused for exactly the subject that produced it; a subject that
+//! names a release or a release group by id never reaches the cache at all,
+//! because its renditions cost no request.
 
 use sha2::{Digest, Sha256};
 
-use hearthsound_plugin::metadata_artwork_provider::exports::hearthsound::plugin::artwork::ArtworkSubject;
+use hearthsound_plugin::catalog_metadata_artwork_provider::exports::hearthsound::plugin::artwork::ArtworkSubject;
 use hearthsound_plugin::types::{EntityKind, Image, ProviderError};
 
-use crate::{api, map, musicbrainz, query, url};
+use crate::cache::{self, Cached, Store};
+use crate::{api, map, musicbrainz, paths, query, wikimedia};
 
 /// Prefix of every key the artwork cache writes.
 const CACHE_KEY_PREFIX: &str = "artwork:v1:";
@@ -29,27 +37,6 @@ const CACHE_KEY_PREFIX: &str = "artwork:v1:";
 /// The unit separator cannot occur in a title, an artist name or an identifier,
 /// so two different subjects never digest the same text.
 const KEY_SEPARATOR: char = '\x1f';
-
-/// How long a resolved lookup stays readable in the cache, in milliseconds.
-///
-/// The release or release group the web service answered with does not change,
-/// so its key is kept for 30 days.
-const FOUND_TTL_MS: u64 = 30 * 24 * 60 * 60 * 1_000;
-
-/// How long the absence of a lookup result stays readable, in milliseconds.
-///
-/// A release the index does not know yet may be indexed within days, so a key
-/// that resolved to nothing is only kept for one.
-const MISSING_TTL_MS: u64 = 24 * 60 * 60 * 1_000;
-
-/// Number of releases a barcode search asks for.
-///
-/// A barcode either names one release or none, but a reissue and its original
-/// pressing can share one, and the first result is the one to draw.
-const RELEASE_SEARCH_LIMIT: u32 = 5;
-
-/// Number of release groups a release group search asks for.
-const RELEASE_GROUP_SEARCH_LIMIT: u32 = 5;
 
 /// Relevance a release group search hit must reach to belong to the subject.
 ///
@@ -65,108 +52,81 @@ const RELEASE_GROUP_SEARCH_SCORE: f32 = 90.0;
 /// are served under different Cover Art Archive paths.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case", tag = "kind", content = "id")]
-pub(crate) enum CachedLookup {
+pub enum Lookup {
     /// The id of the release the lookup resolved.
     Release(String),
     /// The id of the release group the lookup resolved.
     ReleaseGroup(String),
-    /// The lookup found nothing.
-    Missing,
 }
 
-/// The key-value store an artwork lookup caches its results in.
+/// Finds the renditions of an artwork subject's picture.
 ///
-/// The store is an interface rather than the host's key-value import so that
-/// the lookups can be tested without one.
-pub(crate) trait LookupCache {
-    /// Reads the entry stored under `key`.
-    ///
-    /// # Parameters
-    ///
-    /// - `key`: the key to read.
-    ///
-    /// # Returns
-    ///
-    /// The entry, or `None` when the key is absent, expired, or holds a value
-    /// that is not a lookup result.
-    fn read(&self, key: &str) -> Option<CachedLookup>;
-
-    /// Stores `lookup` under `key`.
-    ///
-    /// # Parameters
-    ///
-    /// - `key`: the key to write.
-    /// - `lookup`: the lookup result to store.
-    /// - `ttl_ms`: how long the entry stays readable, in milliseconds.
-    fn write(&self, key: &str, lookup: &CachedLookup, ttl_ms: u64);
-}
-
-/// The instance's key-value store.
-///
-/// A cache is an optimization, so a store that refuses to read or write costs a
-/// log line and another request rather than a failed call.
-pub(crate) struct InstanceStore;
-
-impl LookupCache for InstanceStore {
-    fn read(&self, key: &str) -> Option<CachedLookup> {
-        match hearthsound_plugin::kv::get_json(key) {
-            Ok(Some(lookup)) => {
-                hearthsound_plugin::debug!("artwork lookup of {key} came from the cache");
-
-                Some(lookup)
-            }
-            Ok(None) => None,
-            Err(error) => {
-                hearthsound_plugin::warn!("artwork cache read of {key} failed: {error:?}");
-
-                None
-            }
-        }
-    }
-
-    fn write(&self, key: &str, lookup: &CachedLookup, ttl_ms: u64) {
-        if let Err(error) = hearthsound_plugin::kv::set_json(key, lookup, Some(ttl_ms)) {
-            hearthsound_plugin::warn!("artwork cache write of {key} failed: {error:?}");
-        }
-    }
-}
-
-/// Finds the Cover Art Archive renditions of an artwork subject's picture.
-///
-/// Only an album subject is served: a release or release group id it carries
-/// names the cover directly, a barcode is searched for, and a title is searched
-/// for as a release group together with the album's first artist. An artist
-/// subject, and every other kind, is answered with an empty list, because the
-/// Cover Art Archive holds no portraits.
+/// An album subject is served from the Cover Art Archive: a release or release
+/// group id it carries names the cover directly, a barcode is searched for, and
+/// a title is searched for as a release group together with the album's first
+/// artist. An artist subject is served from Wikimedia Commons through Wikidata,
+/// named by the `mb-artist` id it carries or by the instance's own id for the
+/// artist. Any other kind is answered with an empty list.
 ///
 /// # Parameters
 ///
 /// - `base_url`: base URL of the MusicBrainz web service.
 /// - `artwork_base_url`: base URL of the Cover Art Archive.
-/// - `cache`: the store a lookup result is cached in.
+/// - `store`: the cache a lookup result is stored in.
+/// - `language`: the Wikipedia language whose sitelink is cached beside an
+///   artist's portrait.
+/// - `subject`: the entity whose picture is wanted.
+///
+/// # Returns
+///
+/// The renditions of the picture, narrowest first, and an empty list when the
+/// subject carries nothing to look up, names an entity the services do not
+/// know, or is neither an album nor an artist. An empty list is not an error,
+/// because a provider without a picture is a normal answer for the server's
+/// artwork layer.
+///
+/// # Errors
+///
+/// Returns the provider error of a request that failed. A failed lookup is not
+/// cached, so the next call tries again.
+pub fn find_artwork(
+    base_url: &str,
+    artwork_base_url: &str,
+    store: &dyn Store,
+    language: &str,
+    subject: &ArtworkSubject,
+) -> Result<Vec<Image>, ProviderError> {
+    match subject.kind {
+        EntityKind::Album => album_artwork(artwork_base_url, store, base_url, subject),
+        EntityKind::Artist => artist_artwork(base_url, store, language, subject),
+        EntityKind::Track | EntityKind::Playlist => Ok(Vec::new()),
+    }
+}
+
+/// Finds the Cover Art Archive renditions of an album's front cover.
+///
+/// # Parameters
+///
+/// - `artwork_base_url`: base URL of the Cover Art Archive.
+/// - `store`: the cache a lookup result is stored in.
+/// - `base_url`: base URL of the MusicBrainz web service.
 /// - `subject`: the album whose cover is wanted.
 ///
 /// # Returns
 ///
 /// The renditions of the cover, narrowest first, and an empty list when the
-/// subject is not an album, carries nothing to look up, or names an album the
-/// web service does not know. An empty list is not an error, because a provider
-/// without a cover is a normal answer for the server's artwork layer.
+/// subject carries nothing to look up or names an album the web service does
+/// not know.
 ///
 /// # Errors
 ///
-/// Returns the provider error of a request that failed. A failed request is not
-/// cached, so the next call tries again.
-pub(crate) fn find_artwork(
-    base_url: &str,
+/// Returns the provider error of a request that failed.
+fn album_artwork(
     artwork_base_url: &str,
-    cache: &dyn LookupCache,
+    store: &dyn Store,
+    base_url: &str,
     subject: &ArtworkSubject,
 ) -> Result<Vec<Image>, ProviderError> {
-    if subject.kind != EntityKind::Album {
-        return Ok(Vec::new());
-    }
-
     if let Some(mbid) = id_of(subject, map::NS_RELEASE) {
         return Ok(map::release_images(artwork_base_url, mbid));
     }
@@ -177,17 +137,57 @@ pub(crate) fn find_artwork(
 
     let key = cache_key(subject);
 
-    if let Some(lookup) = cache.read(&key) {
-        return Ok(images(artwork_base_url, &lookup));
+    if let Some(cached) = cache::get::<Lookup>(store, &key) {
+        return Ok(images(artwork_base_url, cached.value().as_ref()));
     }
 
-    let Some(lookup) = lookup(base_url, subject)? else {
+    let Some(answer) = lookup(base_url, subject)? else {
         return Ok(Vec::new());
     };
 
-    cache.write(&key, &lookup, ttl_ms(&lookup));
+    cache::put(store, &key, &answer);
 
-    Ok(images(artwork_base_url, &lookup))
+    Ok(images(artwork_base_url, answer.value().as_ref()))
+}
+
+/// Finds the portrait of an artist.
+///
+/// # Parameters
+///
+/// - `base_url`: base URL of the MusicBrainz web service.
+/// - `store`: the cache Wikidata answers are read from.
+/// - `language`: the Wikipedia language whose sitelink is cached.
+/// - `subject`: the artist whose portrait is wanted.
+///
+/// # Returns
+///
+/// The Wikimedia Commons rendition of the portrait, and an empty list when the
+/// subject names no artist the web service knows, names an artist without a
+/// Wikidata item, or names one whose item has no image.
+///
+/// # Errors
+///
+/// Returns the provider error of a request that failed.
+fn artist_artwork(
+    base_url: &str,
+    store: &dyn Store,
+    language: &str,
+    subject: &ArtworkSubject,
+) -> Result<Vec<Image>, ProviderError> {
+    let Some(mbid) = id_of(subject, map::NS_ARTIST).or(subject.provider_id.as_deref()) else {
+        return Ok(Vec::new());
+    };
+
+    let artist: musicbrainz::ArtistLookup = match api::get_json(base_url, &paths::artist_path(mbid))
+    {
+        Ok(artist) => artist,
+        Err(ProviderError::NotFound) => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+
+    Ok(wikimedia::portrait(store, language, &artist.relations)?
+        .into_iter()
+        .collect())
 }
 
 /// Returns the value of a subject's identifier in one namespace.
@@ -295,15 +295,19 @@ fn sha256_hex(bytes: &[u8]) -> String {
 ///
 /// # Returns
 ///
-/// The lookup result, or `None` when the subject carries neither a barcode nor
-/// a title and there is nothing to search for.
+/// The answer to cache, with [`Cached::Missing`] for a lookup that found
+/// nothing, or `None` when the subject carries neither a barcode nor a title
+/// and there is nothing to search for.
 ///
 /// # Errors
 ///
 /// Returns the provider error of the request that failed.
-fn lookup(base_url: &str, subject: &ArtworkSubject) -> Result<Option<CachedLookup>, ProviderError> {
+fn lookup(
+    base_url: &str,
+    subject: &ArtworkSubject,
+) -> Result<Option<Cached<Lookup>>, ProviderError> {
     if let Some(upc) = id_of(subject, map::NS_UPC) {
-        return release_by_barcode(base_url, upc).map(Some);
+        return release_by_barcode(base_url, upc);
     }
 
     let title = subject.title.trim();
@@ -311,7 +315,7 @@ fn lookup(base_url: &str, subject: &ArtworkSubject) -> Result<Option<CachedLooku
         return Ok(None);
     }
 
-    release_group_by_name(base_url, title, &subject.artists).map(Some)
+    release_group_by_name(base_url, title, &subject.artists)
 }
 
 /// Looks a release up by its barcode.
@@ -323,25 +327,26 @@ fn lookup(base_url: &str, subject: &ArtworkSubject) -> Result<Option<CachedLooku
 ///
 /// # Returns
 ///
-/// The id of the first release the index returned, or [`CachedLookup::Missing`]
-/// when it returned none and when there is no barcode to search for.
+/// The id of the first release the index returned, [`Cached::Missing`] when it
+/// returned none, and `None` when there is no barcode to search for.
 ///
 /// # Errors
 ///
 /// Returns the provider error of the request.
-fn release_by_barcode(base_url: &str, upc: &str) -> Result<CachedLookup, ProviderError> {
+fn release_by_barcode(base_url: &str, upc: &str) -> Result<Option<Cached<Lookup>>, ProviderError> {
     let Some(text) = query::barcode_query(upc) else {
-        return Ok(CachedLookup::Missing);
+        return Ok(None);
     };
 
-    let search: musicbrainz::ReleaseSearch = api::get_json(base_url, &release_search_path(&text))?;
-    hearthsound_plugin::debug!(
+    let search: musicbrainz::ReleaseSearch =
+        api::get_json(base_url, &paths::barcode_search_path(&text))?;
+    debug!(
         "barcode search matched {:?} releases, reading {}",
         search.count,
         search.releases.len()
     );
 
-    Ok(release_lookup(&search))
+    Ok(Some(selected_release(&search)))
 }
 
 /// Picks the lookup result of a barcode search.
@@ -352,12 +357,13 @@ fn release_by_barcode(base_url: &str, upc: &str) -> Result<CachedLookup, Provide
 ///
 /// # Returns
 ///
-/// The id of the first release of the page, or [`CachedLookup::Missing`] when
-/// the page is empty.
-fn release_lookup(search: &musicbrainz::ReleaseSearch) -> CachedLookup {
+/// The first release the index returned, or [`Cached::Missing`] when it
+/// returned none. A barcode a reissue shares with its original pressing names
+/// both, and the first hit is the one the index ranks highest.
+fn selected_release(search: &musicbrainz::ReleaseSearch) -> Cached<Lookup> {
     match search.releases.first() {
-        Some(release) => CachedLookup::Release(release.id.clone()),
-        None => CachedLookup::Missing,
+        Some(release) => Cached::Found(Lookup::Release(release.id.clone())),
+        None => Cached::Missing,
     }
 }
 
@@ -371,9 +377,9 @@ fn release_lookup(search: &musicbrainz::ReleaseSearch) -> CachedLookup {
 ///
 /// # Returns
 ///
-/// The id of the most relevant release group the index scored at least
-/// [`RELEASE_GROUP_SEARCH_SCORE`], or [`CachedLookup::Missing`] when no hit
-/// reaches the score and when there is no title to search for.
+/// The most relevant release group the index scored at least
+/// [`RELEASE_GROUP_SEARCH_SCORE`], [`Cached::Missing`] when no hit reaches that
+/// score, and `None` when there is no title to search for.
 ///
 /// # Errors
 ///
@@ -382,20 +388,20 @@ fn release_group_by_name(
     base_url: &str,
     title: &str,
     artists: &[String],
-) -> Result<CachedLookup, ProviderError> {
+) -> Result<Option<Cached<Lookup>>, ProviderError> {
     let Some(text) = query::release_group_query(title, artists) else {
-        return Ok(CachedLookup::Missing);
+        return Ok(None);
     };
 
     let search: musicbrainz::ReleaseGroupSearch =
-        api::get_json(base_url, &release_group_search_path(&text))?;
-    hearthsound_plugin::debug!(
+        api::get_json(base_url, &paths::release_group_search_path(&text))?;
+    debug!(
         "release group search matched {:?} groups, reading {}",
         search.count,
         search.release_groups.len()
     );
 
-    Ok(release_group_lookup(&search))
+    Ok(Some(selected_group(&search)))
 }
 
 /// Picks the lookup result of a release group search.
@@ -407,90 +413,37 @@ fn release_group_by_name(
 /// # Returns
 ///
 /// The id of the first hit that reaches [`RELEASE_GROUP_SEARCH_SCORE`], or
-/// [`CachedLookup::Missing`] when no hit does. Hits are read in the order the
-/// index returned them, which is by relevance, so the most relevant qualifying
-/// hit wins.
-fn release_group_lookup(search: &musicbrainz::ReleaseGroupSearch) -> CachedLookup {
+/// [`Cached::Missing`] when no hit does. Hits are read in the order the index
+/// returned them, which is by relevance, so the most relevant qualifying hit
+/// wins.
+fn selected_group(search: &musicbrainz::ReleaseGroupSearch) -> Cached<Lookup> {
     match search
         .release_groups
         .iter()
         .find(|group| group.score.unwrap_or(0.0) >= RELEASE_GROUP_SEARCH_SCORE)
     {
-        Some(group) => CachedLookup::ReleaseGroup(group.id.clone()),
-        None => CachedLookup::Missing,
+        Some(group) => Cached::Found(Lookup::ReleaseGroup(group.id.clone())),
+        None => Cached::Missing,
     }
 }
 
-/// Builds the renditions of a cached lookup result.
+/// Builds the renditions of a resolved lookup.
 ///
 /// # Parameters
 ///
 /// - `artwork_base_url`: base URL of the Cover Art Archive.
-/// - `lookup`: the cached lookup result.
+/// - `lookup`: the lookup result, when one was resolved.
 ///
 /// # Returns
 ///
 /// The renditions of the resolved release or release group, and an empty list
-/// for [`CachedLookup::Missing`].
-fn images(artwork_base_url: &str, lookup: &CachedLookup) -> Vec<Image> {
+/// for an absent lookup.
+fn images(artwork_base_url: &str, lookup: Option<&Lookup>) -> Vec<Image> {
     match lookup {
-        CachedLookup::Release(mbid) => map::release_images(artwork_base_url, mbid),
-        CachedLookup::ReleaseGroup(mbid) => map::release_group_images(artwork_base_url, mbid),
-        CachedLookup::Missing => Vec::new(),
+        Some(Lookup::Release(mbid)) => map::release_images(artwork_base_url, mbid),
+        Some(Lookup::ReleaseGroup(mbid)) => map::release_group_images(artwork_base_url, mbid),
+        None => Vec::new(),
     }
-}
-
-/// Returns how long a lookup result stays readable in the cache.
-///
-/// # Parameters
-///
-/// - `lookup`: the lookup result to store.
-///
-/// # Returns
-///
-/// [`FOUND_TTL_MS`] for a resolved id and [`MISSING_TTL_MS`] for the marker
-/// that nothing was resolved.
-fn ttl_ms(lookup: &CachedLookup) -> u64 {
-    match lookup {
-        CachedLookup::Missing => MISSING_TTL_MS,
-        CachedLookup::Release(_) | CachedLookup::ReleaseGroup(_) => FOUND_TTL_MS,
-    }
-}
-
-/// Builds the path of a release search.
-///
-/// # Parameters
-///
-/// - `text`: the Lucene query, unencoded.
-///
-/// # Returns
-///
-/// The path, with the query encoded and the result page bounded by
-/// [`RELEASE_SEARCH_LIMIT`].
-fn release_search_path(text: &str) -> String {
-    format!(
-        "release?query={}&limit={}&fmt=json",
-        url::encode_component(text),
-        RELEASE_SEARCH_LIMIT
-    )
-}
-
-/// Builds the path of a release group search.
-///
-/// # Parameters
-///
-/// - `text`: the Lucene query, unencoded.
-///
-/// # Returns
-///
-/// The path, with the query encoded and the result page bounded by
-/// [`RELEASE_GROUP_SEARCH_LIMIT`].
-fn release_group_search_path(text: &str) -> String {
-    format!(
-        "release-group?query={}&limit={}&fmt=json",
-        url::encode_component(text),
-        RELEASE_GROUP_SEARCH_LIMIT
-    )
 }
 
 #[cfg(test)]
@@ -501,49 +454,49 @@ mod tests {
     use super::*;
     use hearthsound_plugin::types::IdPair;
 
-    /// A key-value store that keeps its entries in memory.
-    struct StubStore {
+    /// A store that keeps its entries in memory.
+    struct MemoryStore {
         /// The entries the store holds.
-        entries: RefCell<HashMap<String, CachedLookup>>,
+        entries: RefCell<HashMap<String, String>>,
         /// The writes the store saw, in order.
-        writes: RefCell<Vec<(String, CachedLookup, u64)>>,
+        writes: RefCell<Vec<(String, String, u64)>>,
     }
 
-    impl StubStore {
+    impl MemoryStore {
         /// Creates an empty store.
-        fn empty() -> StubStore {
-            StubStore {
+        fn empty() -> MemoryStore {
+            MemoryStore {
                 entries: RefCell::new(HashMap::new()),
                 writes: RefCell::new(Vec::new()),
             }
         }
 
-        /// Creates a store holding one entry.
+        /// Creates a store holding one cached lookup.
         ///
         /// # Parameters
         ///
         /// - `key`: the key of the entry.
-        /// - `lookup`: the entry.
-        fn holding(key: &str, lookup: CachedLookup) -> StubStore {
-            let store = StubStore::empty();
-            store.entries.borrow_mut().insert(key.to_string(), lookup);
+        /// - `answer`: the entry.
+        fn holding(key: &str, answer: &Cached<Lookup>) -> MemoryStore {
+            let store = MemoryStore::empty();
+            cache::put(&store, key, answer);
 
             store
         }
     }
 
-    impl LookupCache for StubStore {
-        fn read(&self, key: &str) -> Option<CachedLookup> {
+    impl Store for MemoryStore {
+        fn read(&self, key: &str) -> Option<String> {
             self.entries.borrow().get(key).cloned()
         }
 
-        fn write(&self, key: &str, lookup: &CachedLookup, ttl_ms: u64) {
+        fn write(&self, key: &str, value: &str, ttl_ms: u64) {
             self.entries
                 .borrow_mut()
-                .insert(key.to_string(), lookup.clone());
+                .insert(key.to_string(), value.to_string());
             self.writes
                 .borrow_mut()
-                .push((key.to_string(), lookup.clone(), ttl_ms));
+                .push((key.to_string(), value.to_string(), ttl_ms));
         }
     }
 
@@ -577,12 +530,13 @@ mod tests {
             namespace: map::NS_RELEASE.to_string(),
             value: "6360f948-17d1-4135-a580-34dc200930d8".to_string(),
         }];
-        let store = StubStore::empty();
+        let store = MemoryStore::empty();
 
         let found = find_artwork(
             "https://musicbrainz.invalid/ws/2/",
             "https://coverartarchive.org",
             &store,
+            "en",
             &subject,
         )
         .unwrap();
@@ -602,12 +556,13 @@ mod tests {
             namespace: map::NS_RELEASE_GROUP.to_string(),
             value: "17d74d52-c92b-3b8d-9f87-218ab2d1c4a0".to_string(),
         }];
-        let store = StubStore::empty();
+        let store = MemoryStore::empty();
 
         let found = find_artwork(
             "https://musicbrainz.invalid/ws/2/",
             "https://coverartarchive.org",
             &store,
+            "en",
             &subject,
         )
         .unwrap();
@@ -622,15 +577,18 @@ mod tests {
     #[test]
     fn a_cached_release_is_answered_without_a_lookup() {
         let subject = album_subject();
-        let store = StubStore::holding(
+        let store = MemoryStore::holding(
             &cache_key(&subject),
-            CachedLookup::Release("6360f948-17d1-4135-a580-34dc200930d8".to_string()),
+            &Cached::Found(Lookup::Release(
+                "6360f948-17d1-4135-a580-34dc200930d8".to_string(),
+            )),
         );
 
         let found = find_artwork(
             "https://musicbrainz.invalid/ws/2/",
             "https://coverartarchive.org",
             &store,
+            "en",
             &subject,
         )
         .unwrap();
@@ -639,50 +597,76 @@ mod tests {
             images_of(&found)[0].0,
             "https://coverartarchive.org/release/6360f948-17d1-4135-a580-34dc200930d8/front-250"
         );
-        assert!(store.writes.borrow().is_empty());
+        assert_eq!(store.writes.borrow().len(), 1);
     }
 
     #[test]
     fn a_cached_absence_answers_no_images() {
         let subject = album_subject();
-        let store = StubStore::holding(&cache_key(&subject), CachedLookup::Missing);
+        let store = MemoryStore::holding(&cache_key(&subject), &Cached::<Lookup>::Missing);
 
         let found = find_artwork(
             "https://musicbrainz.invalid/ws/2/",
             "https://coverartarchive.org",
             &store,
+            "en",
             &subject,
         )
         .unwrap();
 
         assert!(found.is_empty());
-        assert!(store.writes.borrow().is_empty());
+        assert_eq!(store.writes.borrow()[0].2, cache::MISSING_TTL_MS);
     }
 
     #[test]
-    fn an_artist_subject_answers_no_images() {
+    fn a_track_or_playlist_subject_answers_no_images() {
+        let store = MemoryStore::empty();
+
+        for kind in [EntityKind::Track, EntityKind::Playlist] {
+            let subject = ArtworkSubject {
+                kind,
+                provider_id: Some("abc".to_string()),
+                ids: Vec::new(),
+                title: "Roygbiv".to_string(),
+                artists: Vec::new(),
+            };
+
+            assert!(
+                find_artwork(
+                    "https://musicbrainz.invalid/ws/2/",
+                    "https://coverartarchive.org",
+                    &store,
+                    "en",
+                    &subject,
+                )
+                .unwrap()
+                .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    fn an_artist_without_an_id_answers_no_images() {
         let subject = ArtworkSubject {
             kind: EntityKind::Artist,
             provider_id: None,
-            ids: vec![IdPair {
-                namespace: map::NS_ARTIST.to_string(),
-                value: "d1f2e3a4-5b6c-4d7e-8f90-1a2b3c4d5e6f".to_string(),
-            }],
+            ids: Vec::new(),
             title: "Northlight".to_string(),
             artists: Vec::new(),
         };
-        let store = StubStore::empty();
+        let store = MemoryStore::empty();
 
-        let found = find_artwork(
-            "https://musicbrainz.invalid/ws/2/",
-            "https://coverartarchive.org",
-            &store,
-            &subject,
-        )
-        .unwrap();
-
-        assert!(found.is_empty());
-        assert!(store.writes.borrow().is_empty());
+        assert!(
+            find_artwork(
+                "https://musicbrainz.invalid/ws/2/",
+                "https://coverartarchive.org",
+                &store,
+                "en",
+                &subject,
+            )
+            .unwrap()
+            .is_empty()
+        );
     }
 
     #[test]
@@ -729,32 +713,18 @@ mod tests {
     }
 
     #[test]
-    fn a_resolved_lookup_is_cached_for_thirty_days() {
-        assert_eq!(
-            ttl_ms(&CachedLookup::Release("6360f948".to_string())),
-            2_592_000_000
-        );
-        assert_eq!(
-            ttl_ms(&CachedLookup::ReleaseGroup("17d74d52".to_string())),
-            2_592_000_000
-        );
-        assert_eq!(ttl_ms(&CachedLookup::Missing), 86_400_000);
-    }
-
-    #[test]
-    fn a_cached_lookup_round_trips_through_json() {
+    fn a_cached_lookup_round_trips_through_the_store() {
         for lookup in [
-            CachedLookup::Release("6360f948-17d1-4135-a580-34dc200930d8".to_string()),
-            CachedLookup::ReleaseGroup("17d74d52-c92b-3b8d-9f87-218ab2d1c4a0".to_string()),
-            CachedLookup::Missing,
+            Lookup::Release("6360f948-17d1-4135-a580-34dc200930d8".to_string()),
+            Lookup::ReleaseGroup("17d74d52-c92b-3b8d-9f87-218ab2d1c4a0".to_string()),
         ] {
-            let json = serde_json::to_string(&lookup).unwrap();
-            let back: CachedLookup = serde_json::from_str(&json).unwrap();
+            let store = MemoryStore::empty();
+            cache::put(&store, "k", &Cached::Found(lookup.clone()));
+            let read = cache::get::<Lookup>(&store, "k").unwrap().value();
 
-            assert_eq!(ttl_ms(&back), ttl_ms(&lookup));
             assert_eq!(
-                images("https://coverartarchive.org", &back).len(),
-                images("https://coverartarchive.org", &lookup).len()
+                images("https://coverartarchive.org", read.as_ref()).len(),
+                images("https://coverartarchive.org", Some(&lookup)).len()
             );
         }
     }
@@ -764,10 +734,12 @@ mod tests {
         let search: musicbrainz::ReleaseSearch =
             serde_json::from_str(include_str!("fixtures/release_search.json")).unwrap();
 
-        assert!(matches!(
-            release_lookup(&search),
-            CachedLookup::Release(id) if id == "6360f948-17d1-4135-a580-34dc200930d8"
-        ));
+        match selected_release(&search).value() {
+            Some(Lookup::Release(id)) => {
+                assert_eq!(id, "6360f948-17d1-4135-a580-34dc200930d8");
+            }
+            _ => panic!("expected the fixture to hold a release"),
+        }
     }
 
     #[test]
@@ -777,7 +749,7 @@ mod tests {
             releases: Vec::new(),
         };
 
-        assert!(matches!(release_lookup(&search), CachedLookup::Missing));
+        assert!(selected_release(&search).value().is_none());
     }
 
     #[test]
@@ -787,10 +759,12 @@ mod tests {
 
         // The fixture's hits score 71, "95" and 91, so the first hit is not
         // relevant enough and the second one wins.
-        assert!(matches!(
-            release_group_lookup(&search),
-            CachedLookup::ReleaseGroup(id) if id == "17d74d52-c92b-3b8d-9f87-218ab2d1c4a0"
-        ));
+        match selected_group(&search).value() {
+            Some(Lookup::ReleaseGroup(id)) => {
+                assert_eq!(id, "17d74d52-c92b-3b8d-9f87-218ab2d1c4a0");
+            }
+            _ => panic!("expected a release group"),
+        }
     }
 
     #[test]
@@ -804,25 +778,6 @@ mod tests {
             }],
         };
 
-        assert!(matches!(
-            release_group_lookup(&search),
-            CachedLookup::Missing
-        ));
-    }
-
-    #[test]
-    fn a_barcode_search_encodes_the_barcode_and_bounds_the_page() {
-        assert_eq!(
-            release_search_path("barcode:0602547508228"),
-            "release?query=barcode%3A0602547508228&limit=5&fmt=json"
-        );
-    }
-
-    #[test]
-    fn a_release_group_search_encodes_the_query_and_bounds_the_page() {
-        assert_eq!(
-            release_group_search_path("releasegroup:\"Geogaddi\" AND artist:\"Boards of Canada\""),
-            "release-group?query=releasegroup%3A%22Geogaddi%22%20AND%20artist%3A%22Boards%20of%20Canada%22&limit=5&fmt=json"
-        );
+        assert!(selected_group(&search).value().is_none());
     }
 }

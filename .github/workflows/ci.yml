@@ -17,13 +17,13 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
       - name: Lint
-        run: cargo clippy --target wasm32-wasip2 -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
       - name: Test
         run: cargo test
       - name: Build the plugin
         run: cargo build --release --locked --target wasm32-wasip2
       - name: Install hsplugin
-        run: cargo install --locked --git https://github.com/hearthsound/plugin-sdk --tag v0.4.0 hearthsound-plugin-cli
+        run: cargo install --locked --git https://github.com/hearthsound/plugin-sdk --tag v0.5.0 hearthsound-plugin-cli
       - name: Check the plugin
         run: hsplugin check
       - name: Pack the plugin

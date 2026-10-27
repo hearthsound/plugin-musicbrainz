@@ -109,6 +109,10 @@ pub struct ReleaseGroup {
     /// Primary type of the release group, for example `Album` or `Single`.
     #[serde(rename = "primary-type")]
     pub primary_type: Option<String>,
+    /// Secondary types of the release group, for example `Compilation`, which
+    /// say what kind of release group it is beyond its primary type.
+    #[serde(default, rename = "secondary-types")]
+    pub secondary_types: Vec<String>,
     /// Genres the release group is tagged with, which stand in for a release
     /// that carries none of its own.
     #[serde(default)]
@@ -129,9 +133,25 @@ pub struct ReleaseStub {
     /// Release date, as complete as the web service knows it (`1998-08-20`,
     /// `1998-08` or `1998`).
     pub date: Option<String>,
+    /// Release status as the web service names it, for example `Official`,
+    /// `Promotion` or `Bootleg`.
+    pub status: Option<String>,
+    /// Barcode of the release, which a listing leaves out or reports as an
+    /// empty string when it does not know one.
+    pub barcode: Option<String>,
+    /// The web service's own disambiguation of this pressing, which is empty
+    /// for most releases.
+    pub disambiguation: Option<String>,
     /// Number of tracks on the release.
     #[serde(rename = "track-count")]
     pub track_count: Option<u32>,
+    /// The artists credited on the release, which a browse or search listing
+    /// returns and a recording's release list omits.
+    #[serde(default, rename = "artist-credit")]
+    pub artist_credit: Vec<ArtistCredit>,
+    /// The media of the release, when the listing asked for them.
+    #[serde(default)]
+    pub media: Vec<Medium>,
     /// The release group this release belongs to.
     #[serde(rename = "release-group")]
     pub release_group: Option<ReleaseGroup>,
@@ -246,6 +266,10 @@ pub struct Track {
 pub struct Medium {
     /// Position of the medium in the release, starting at 1.
     pub position: Option<u32>,
+    /// Number of tracks on the medium, which a release listing reports without
+    /// listing the tracks themselves.
+    #[serde(rename = "track-count")]
+    pub track_count: Option<u32>,
     /// The medium's tracks.
     #[serde(default)]
     pub tracks: Vec<Track>,
@@ -269,6 +293,9 @@ pub struct Release {
     /// Genres the release itself is tagged with.
     #[serde(default)]
     pub genres: Vec<Genre>,
+    /// The web service's own disambiguation of this pressing, which is empty
+    /// for most releases.
+    pub disambiguation: Option<String>,
     /// The release group this release belongs to.
     #[serde(rename = "release-group")]
     pub release_group: Option<ReleaseGroup>,

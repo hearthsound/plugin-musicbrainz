@@ -1,0 +1,92 @@
+{
+  "created": "2026-10-27T06:42:40.317Z",
+  "count": 9,
+  "offset": 0,
+  "releases": [
+    {
+      "score": 100,
+      "title": "Geogaddi",
+      "status": "Official",
+      "country": "JP",
+      "barcode": "4523132112510",
+      "track-count": 24,
+      "artist-credit": [
+        {
+          "name": "Boards of Canada",
+          "artist": {
+            "id": "69158f97-4c07-4c4e-baf8-4e4ab1ed666e",
+            "name": "Boards of Canada",
+            "sort-name": "Boards of Canada",
+            "disambiguation": "Scottish electronic duo"
+          }
+        }
+      ],
+      "release-group": {
+        "id": "8183834a-6c8a-39ef-a7bc-a82f79b929e9",
+        "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+        "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+        "title": "Geogaddi",
+        "primary-type": "Album"
+      },
+      "id": "5da8e677-bec2-471f-82ec-5b51133cd0c7",
+      "date": "2002-02-13"
+    },
+    {
+      "score": 100,
+      "title": "Geogaddi",
+      "status": "Official",
+      "country": "JP",
+      "barcode": "801061803027",
+      "track-count": 24,
+      "artist-credit": [
+        {
+          "name": "Boards of Canada",
+          "artist": {
+            "id": "69158f97-4c07-4c4e-baf8-4e4ab1ed666e",
+            "name": "Boards of Canada",
+            "sort-name": "Boards of Canada",
+            "disambiguation": "Scottish electronic duo"
+          }
+        }
+      ],
+      "release-group": {
+        "id": "8183834a-6c8a-39ef-a7bc-a82f79b929e9",
+        "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+        "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+        "title": "Geogaddi",
+        "primary-type": "Album"
+      },
+      "id": "3f4c1a2b-5d6e-4f70-8192-a3b4c5d6e7f8",
+      "date": "2001-06-01"
+    },
+    {
+      "score": 100,
+      "title": "In a Beautiful Place Out in the Country",
+      "status": "Official",
+      "country": "JP",
+      "barcode": "801061802020",
+      "track-count": 4,
+      "artist-credit": [
+        {
+          "name": "Boards of Canada",
+          "artist": {
+            "id": "69158f97-4c07-4c4e-baf8-4e4ab1ed666e",
+            "name": "Boards of Canada",
+            "sort-name": "Boards of Canada",
+            "disambiguation": "Scottish electronic duo"
+          }
+        }
+      ],
+      "release-group": {
+        "id": "b1c2d3e4-f5a6-4b7c-8d9e-0f1a2b3c4d5e",
+        "primary-type": "EP",
+        "primary-type-id": "ba40b52a-2fb8-3d84-9fb5-2f26f8f8b4d2",
+        "title": "In a Beautiful Place Out in the Country",
+        "secondary-types": [],
+        "secondary-type-ids": []
+      },
+      "id": "7c8d9e0f-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
+      "date": "2000-11-27"
+    }
+  ]
+}

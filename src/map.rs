@@ -1,24 +1,32 @@
 //! Translation of MusicBrainz records into provider records.
 //!
 //! The functions here are pure: they take the types of [`crate::musicbrainz`]
-//! and return the records of the `hearthsound:plugin@0.3.0` `types` interface,
-//! so they are unit-tested on the host target against captured web service
-//! responses.
+//! and [`crate::listenbrainz`] and return the records of the
+//! `hearthsound:plugin@0.5.0` `types` interface, so they are unit-tested on the
+//! host target against captured web service responses.
 //!
 //! MusicBrainz issues its own ids and the server namespaces them per provider
 //! instance, so a record's `id` field carries the MusicBrainz id as it is. The
 //! canonical identifiers the server reconciles across providers - an ISRC, a
 //! MusicBrainz recording, release, release group or artist id, and a release's
 //! UPC - are reported in their own [`IdPair`] namespaces.
+//!
+//! Two conventions of the provider records are worth naming here. An album's
+//! type is lowercase and follows the release group: its primary type when it
+//! carries no secondary type, and the first secondary type otherwise, because a
+//! compilation or a live album is what the listener needs to see. An album's
+//! edition is the web service's own disambiguation of the pressing, when it has
+//! one, which is the only way MusicBrainz names an edition.
 
-use hearthsound_plugin::metadata_artwork_provider::exports::hearthsound::plugin::metadata::{
+use hearthsound_plugin::catalog_metadata_artwork_provider::exports::hearthsound::plugin::metadata::{
     ArtistInfo, ArtistLink, RecordingMatch, ReleaseSummary,
 };
 use hearthsound_plugin::types::{
-    Album, AlbumRef, ArtistCredit as ProviderArtistCredit, IdPair, Image, Track as ProviderTrack,
+    Album, AlbumRef, Artist, ArtistCredit as ProviderArtistCredit, IdPair, Image,
+    Track as ProviderTrack,
 };
 
-use crate::{musicbrainz, url};
+use crate::{listenbrainz, musicbrainz, url};
 
 /// Id namespace of an International Standard Recording Code.
 pub const NS_ISRC: &str = "isrc";
@@ -186,17 +194,19 @@ pub fn recording_match(
 /// # Returns
 ///
 /// The album with the release id and title, the credited artists, the release
-/// date, the primary type of its release group, the barcode as its UPC, the
-/// release's genres (or the release group's when the release has none) and
-/// every track of every medium, in medium then track order. Each track carries
-/// the position of its medium as its disc number and points back at the album.
-/// The images are empty: this plugin does not read artwork yet.
+/// date, the album type of its release group, the barcode as its UPC, the
+/// release's genres (or the release group's when the release has none), the
+/// web service's disambiguation of the pressing as its edition and every track
+/// of every medium, in medium then track order. Each track carries the position
+/// of its medium as its disc number and points back at the album. The images
+/// are empty: this plugin reports cover art through the artwork layer, which
+/// serves it from the Cover Art Archive.
 ///
 /// # Example
 ///
 /// ```text
 /// album(&release)
-///   -> Album { id: "6360f948-...", title: "Music Has the Right to Children", upc: Some("744861029922"), tracks: [Track { disc_number: Some(1), track_number: Some(1), .. }], .. }
+///   -> Album { id: "6360f948-...", title: "Music Has the Right to Children", upc: Some("744861029922"), album_type: Some("album"), edition: None, .. }
 /// ```
 pub fn album(release: &musicbrainz::Release) -> Album {
     let artists = artist_credits(&release.artist_credit);
@@ -215,15 +225,13 @@ pub fn album(release: &musicbrainz::Release) -> Album {
         title: release.title.clone(),
         artists,
         release_date: non_empty(release.date.as_deref()),
-        album_type: release
-            .release_group
-            .as_ref()
-            .and_then(|group| group.primary_type.clone()),
+        album_type: album_type(release.release_group.as_ref()),
         upc: non_empty(release.barcode.as_deref()),
         genres: genres(release),
         images: Vec::new(),
         tracks,
         ids: album_ids(release),
+        edition: version(release.disambiguation.as_deref()),
     }
 }
 
@@ -298,14 +306,16 @@ pub fn track(
 ///
 /// # Returns
 ///
-/// The reference with the release id, title, artists and the year the release
-/// date starts with. Its images are empty.
+/// The reference with the release id, title, artists, the year the release date
+/// starts with, the album type of the release group, the release's
+/// disambiguation as its edition, the track count its media add up to when the
+/// response carried them, the ids of [`album_ids`] and no images.
 ///
 /// # Example
 ///
 /// ```text
 /// album_ref(&release, &artists)
-///   -> AlbumRef { id: "6360f948-...", title: "Music Has the Right to Children", year: Some(1998), images: [] }
+///   -> AlbumRef { id: "6360f948-...", title: "Music Has the Right to Children", year: Some(1998), track_count: Some(18), .. }
 /// ```
 fn album_ref(release: &musicbrainz::Release, artists: &[ProviderArtistCredit]) -> AlbumRef {
     AlbumRef {
@@ -314,7 +324,224 @@ fn album_ref(release: &musicbrainz::Release, artists: &[ProviderArtistCredit]) -
         artists: artists.to_vec(),
         year: year(release.date.as_deref()),
         images: Vec::new(),
+        album_type: album_type(release.release_group.as_ref()),
+        edition: version(release.disambiguation.as_deref()),
+        track_count: total_tracks(release),
+        ids: album_ids(release),
     }
+}
+
+/// Builds the album reference of a release listing entry.
+///
+/// # Parameters
+///
+/// - `release`: the release as a browse or search listing returned it.
+///
+/// # Returns
+///
+/// The reference with the release id, title, artists, year, album type,
+/// edition, the track count the listing reported, the ids of [`stub_ids`] and
+/// no images.
+///
+/// # Example
+///
+/// ```text
+/// release_ref_from_stub(&listing.releases[0])
+///   -> AlbumRef { id: "5da8e677-...", title: "Geogaddi", album_type: Some("album"), year: Some(2002), .. }
+/// ```
+pub fn release_ref_from_stub(release: &musicbrainz::ReleaseStub) -> AlbumRef {
+    AlbumRef {
+        id: release.id.clone(),
+        title: release.title.clone(),
+        artists: artist_credits(&release.artist_credit),
+        year: year(release.date.as_deref()),
+        images: Vec::new(),
+        album_type: album_type(release.release_group.as_ref()),
+        edition: version(release.disambiguation.as_deref()),
+        track_count: release
+            .track_count
+            .or_else(|| total_media_tracks(&release.media)),
+        ids: stub_ids(release),
+    }
+}
+
+/// Builds the album reference of a release lookup.
+///
+/// # Parameters
+///
+/// - `release`: the release as a lookup returned it.
+///
+/// # Returns
+///
+/// The reference of [`album_ref`], with the artists taken from the release's
+/// own credits.
+///
+/// # Example
+///
+/// ```text
+/// release_ref(&release)
+///   -> AlbumRef { id: "6360f948-...", ids: [("mb-release", "6360f948-..."), ("mb-release-group", "17d74d52-...")], .. }
+/// ```
+pub fn release_ref(release: &musicbrainz::Release) -> AlbumRef {
+    let artists = artist_credits(&release.artist_credit);
+
+    album_ref(release, &artists)
+}
+
+/// Collects the ids of a release listing entry.
+///
+/// # Parameters
+///
+/// - `release`: the release to collect ids for.
+///
+/// # Returns
+///
+/// The `mb-release` id, the `mb-release-group` id when the listing carried the
+/// release group, and the `upc` pair when the release has a barcode.
+///
+/// # Example
+///
+/// ```text
+/// stub_ids(&listing.releases[0])
+///   -> [("mb-release", "5da8e677-..."), ("mb-release-group", "8183834a-...")]
+/// ```
+pub fn stub_ids(release: &musicbrainz::ReleaseStub) -> Vec<IdPair> {
+    let mut ids = vec![id_pair(NS_RELEASE, &release.id)];
+    if let Some(group) = release
+        .release_group
+        .as_ref()
+        .and_then(|group| group.id.as_deref())
+    {
+        ids.push(id_pair(NS_RELEASE_GROUP, group));
+    }
+    if let Some(upc) = non_empty(release.barcode.as_deref()) {
+        ids.push(id_pair(NS_UPC, &upc));
+    }
+    ids
+}
+
+/// Returns the album type a release group names.
+///
+/// The type is lowercase. A release group's secondary type wins over its
+/// primary type, because a compilation, a live album or a soundtrack is what
+/// the listener needs to see rather than the album, EP or single the group is
+/// primarily. A primary type outside those three names is reported as `other`,
+/// which is the vocabulary the server knows.
+///
+/// # Parameters
+///
+/// - `group`: the release group of the release, when the response carried one.
+///
+/// # Returns
+///
+/// The type, or `None` when the release group names neither a primary nor a
+/// secondary type.
+///
+/// # Example
+///
+/// ```text
+/// album_type(&album_group)              -> Some("album")
+/// album_type(&compilation_group)        -> Some("compilation")
+/// album_type(&single_with_no_group)     -> None
+/// ```
+pub fn album_type(group: Option<&musicbrainz::ReleaseGroup>) -> Option<String> {
+    let group = group?;
+
+    if let Some(secondary) = group.secondary_types.first() {
+        return Some(secondary_type(secondary));
+    }
+
+    group
+        .primary_type
+        .as_deref()
+        .map(|primary| match primary.to_ascii_lowercase().as_str() {
+            "album" => "album".to_string(),
+            "ep" => "ep".to_string(),
+            "single" => "single".to_string(),
+            _ => "other".to_string(),
+        })
+}
+
+/// Maps one secondary release group type to the server's vocabulary.
+///
+/// # Parameters
+///
+/// - `secondary`: the type as the web service names it, for example
+///   `Compilation` or `DJ-mix`.
+///
+/// # Returns
+///
+/// The lowercase type when it is one the server knows, and `other` for every
+/// other secondary type, because a secondary type always outranks the primary
+/// one.
+fn secondary_type(secondary: &str) -> String {
+    match secondary.to_ascii_lowercase().as_str() {
+        known @ ("compilation" | "live" | "remix" | "soundtrack" | "dj-mix" | "demo"
+        | "broadcast" | "other") => known.to_string(),
+        _ => "other".to_string(),
+    }
+}
+
+/// Returns the track count the media of a release add up to.
+///
+/// # Parameters
+///
+/// - `release`: the release to read.
+///
+/// # Returns
+///
+/// The sum of the track counts its media report, or `None` when the response
+/// carried no media.
+fn total_tracks(release: &musicbrainz::Release) -> Option<u32> {
+    total_media_tracks(&release.media)
+}
+
+/// Returns the track count a list of media adds up to.
+///
+/// # Parameters
+///
+/// - `media`: the media to count; a medium that reports no count contributes
+///   the tracks it lists.
+///
+/// # Returns
+///
+/// The sum, or `None` when there are no media to count.
+fn total_media_tracks(media: &[musicbrainz::Medium]) -> Option<u32> {
+    if media.is_empty() {
+        return None;
+    }
+
+    Some(
+        media
+            .iter()
+            .map(|medium| {
+                medium
+                    .track_count
+                    .unwrap_or(u32::try_from(medium.tracks.len()).unwrap_or(u32::MAX))
+            })
+            .sum(),
+    )
+}
+
+/// Returns the edition a release's disambiguation names.
+///
+/// # Parameters
+///
+/// - `disambiguation`: the web service's disambiguation comment.
+///
+/// # Returns
+///
+/// The comment, or `None` when the web service has none for the release.
+///
+/// # Example
+///
+/// ```text
+/// version(Some("2011 remaster")) -> Some("2011 remaster".to_string())
+/// version(Some(""))              -> None
+/// version(None)                  -> None
+/// ```
+fn version(disambiguation: Option<&str>) -> Option<String> {
+    non_empty(disambiguation)
 }
 
 /// Collects the ids of a release.
@@ -428,7 +655,7 @@ fn narrow(value: u32) -> Option<u16> {
 /// non_empty(Some(""))           -> None
 /// non_empty(None)               -> None
 /// ```
-fn non_empty(value: Option<&str>) -> Option<String> {
+pub fn non_empty(value: Option<&str>) -> Option<String> {
     value.filter(|value| !value.is_empty()).map(str::to_string)
 }
 
@@ -509,28 +736,243 @@ pub fn artist_links(relations: &[musicbrainz::ArtistRelation]) -> Vec<ArtistLink
 
 /// Converts an artist lookup into artist information.
 ///
-/// The web service has no biography of its own, so the information carries the
-/// artist's `mb-artist` id and the links of its url relations and nothing else.
+/// The web service has no biography of its own, so the biography and the
+/// Wikipedia page it was read from come from Wikidata and Wikipedia, and the
+/// caller hands them in.
 ///
 /// # Parameters
 ///
 /// - `artist`: the artist as an artist lookup returned it.
+/// - `biography`: the biography text, when one was read.
+/// - `links`: the artist's links, in the order they should be reported.
 ///
 /// # Returns
 ///
-/// The artist information.
+/// The artist information with the `mb-artist` id and the links it was given.
 ///
 /// # Example
 ///
 /// ```text
-/// artist_info(&ArtistLookup { id: "d1f2e3a4-...".to_string(), name: "Northlight".to_string(), relations: vec![] })
-///   -> ArtistInfo { ids: [("mb-artist", "d1f2e3a4-...")], biography: None, links: [] }
+/// artist_info(&lookup, None, artist_links(&lookup.relations))
+///   -> ArtistInfo { ids: [("mb-artist", "d1f2e3a4-...")], biography: None, links: [...] }
 /// ```
-pub fn artist_info(artist: &musicbrainz::ArtistLookup) -> ArtistInfo {
+pub fn artist_info(
+    artist: &musicbrainz::ArtistLookup,
+    biography: Option<String>,
+    links: Vec<ArtistLink>,
+) -> ArtistInfo {
     ArtistInfo {
         ids: vec![id_pair(NS_ARTIST, &artist.id)],
-        biography: None,
-        links: artist_links(&artist.relations),
+        biography: non_empty(biography.as_deref()),
+        links,
+    }
+}
+
+/// Appends a link unless the list already names the same page.
+///
+/// # Parameters
+///
+/// - `links`: the links to extend.
+/// - `kind`: the link kind of the entry.
+/// - `url`: the url of the entry.
+///
+/// A page a url relation already named is not listed twice, so the Wikipedia
+/// page a biography was read from does not appear beside the one MusicBrainz
+/// links to.
+///
+/// # Example
+///
+/// ```text
+/// let mut links = vec![ArtistLink { kind: "wikipedia".into(), url: "https://en.wikipedia.org/wiki/Northlight".into() }];
+/// push_link(&mut links, "wikipedia", "https://en.wikipedia.org/wiki/Northlight");
+/// // links still holds one entry
+/// ```
+pub fn push_link(links: &mut Vec<ArtistLink>, kind: &str, url: &str) {
+    if url.is_empty() || links.iter().any(|link| link.url == url) {
+        return;
+    }
+
+    links.push(ArtistLink {
+        kind: kind.to_string(),
+        url: url.to_string(),
+    });
+}
+
+/// Converts an artist lookup into a catalog artist.
+///
+/// # Parameters
+///
+/// - `artist`: the artist as an artist lookup returned it.
+/// - `images`: the renditions of the artist's portrait, narrowest first.
+/// - `album_count`: the number of albums the provider reported for the artist,
+///   when it reported one.
+///
+/// # Returns
+///
+/// The artist with the `mb-artist` id.
+///
+/// # Example
+///
+/// ```text
+/// artist(&lookup, vec![portrait], None)
+///   -> Artist { id: "d1f2e3a4-...", name: "Northlight", album_count: None, ids: [("mb-artist", "d1f2e3a4-...")] }
+/// ```
+pub fn artist(
+    artist: &musicbrainz::ArtistLookup,
+    images: Vec<Image>,
+    album_count: Option<u32>,
+) -> Artist {
+    Artist {
+        id: artist.id.clone(),
+        name: artist.name.clone(),
+        images,
+        ids: vec![id_pair(NS_ARTIST, &artist.id)],
+        album_count,
+    }
+}
+
+/// Width of the Wikimedia Commons rendition of an artist portrait.
+///
+/// The server stores every rendition it can get and serves the size a page
+/// asks for from it, so the plugin declares the width a portrait page draws.
+const PORTRAIT_WIDTH: u32 = 1200;
+
+/// Builds the Wikimedia Commons rendition of an artist's portrait.
+///
+/// # Parameters
+///
+/// - `file`: the file name Wikidata names, for example
+///   `Boards of Canada 1999.jpg`.
+///
+/// # Returns
+///
+/// The image, at [`PORTRAIT_WIDTH`] pixels wide.
+///
+/// # Example
+///
+/// ```text
+/// commons_portrait("Northlight.jpg")
+///   -> Image { url: "https://commons.wikimedia.org/wiki/Special:FilePath/Northlight.jpg?width=1200", width: Some(1200), height: None }
+/// ```
+pub fn commons_portrait(file: &str) -> Image {
+    Image {
+        url: format!(
+            "{}/wiki/Special:FilePath/{}?width={PORTRAIT_WIDTH}",
+            url::COMMONS_BASE_URL,
+            url::encode_component(file)
+        ),
+        width: Some(PORTRAIT_WIDTH),
+        height: None,
+    }
+}
+
+/// Converts a recording into a catalog track.
+///
+/// # Parameters
+///
+/// - `recording`: the recording as a search, lookup or ISRC result returned
+///   it.
+/// - `release`: the release the track's album reference is built from, when the
+///   response named one.
+/// - `isrcs`: the ISRCs to report for the recording, in order.
+///
+/// # Returns
+///
+/// The track with the recording as its id, its title, the credited artists, the
+/// album reference of `release`, the recording's length as its duration, the
+/// `mb-recording` id, one `isrc` pair per reported ISRC and the first reported
+/// ISRC as its `isrc` field. Neither a disc nor a track number is reported,
+/// because neither is read from the listing; the explicit flag stays unset,
+/// because MusicBrainz does not record one.
+///
+/// # Example
+///
+/// ```text
+/// recording_track(&recording, Some(&recording.releases[0]), &recording.isrcs)
+///   -> Track { id: "b061ba14-...", title: "Wildlife Analysis", album: Some(AlbumRef { .. }), isrc: Some("GBBPW9800010"), .. }
+/// ```
+pub fn recording_track(
+    recording: &musicbrainz::Recording,
+    release: Option<&musicbrainz::ReleaseStub>,
+    isrcs: &[String],
+) -> ProviderTrack {
+    let artists = artist_credits(&recording.artist_credit);
+    let mut ids = vec![id_pair(NS_RECORDING, &recording.id)];
+    ids.extend(isrcs.iter().map(|isrc| id_pair(NS_ISRC, isrc)));
+
+    ProviderTrack {
+        id: recording.id.clone(),
+        title: recording.title.clone(),
+        artists: artists.clone(),
+        album: release.map(|release| AlbumRef {
+            artists,
+            ..release_ref_from_stub(release)
+        }),
+        duration_ms: recording.length,
+        disc_number: None,
+        track_number: None,
+        isrc: isrcs.first().cloned(),
+        explicit: None,
+        ids,
+    }
+}
+
+/// Converts an entry of an artist's popularity list into a catalog track.
+///
+/// # Parameters
+///
+/// - `entry`: the entry as ListenBrainz returned it.
+///
+/// # Returns
+///
+/// The track with the recording as its id, the recording's title, the artist the
+/// list names, the recording's length as its duration, the `mb-recording` id
+/// and, when ListenBrainz named the release the recording is played from, the
+/// reference of that release. A track without a release stays without an album,
+/// because ListenBrainz does not know every release a recording appears on.
+///
+/// # Example
+///
+/// ```text
+/// popularity_track(&entry)
+///   -> Track { id: "13dd61c7-...", title: "Closer", album: Some(AlbumRef { id: "ba8701ba-...", .. }), .. }
+/// ```
+pub fn popularity_track(entry: &listenbrainz::RecordingPopularity) -> ProviderTrack {
+    let artists = vec![ProviderArtistCredit {
+        name: entry.artist_name.clone(),
+        ids: entry
+            .artist_mbids
+            .iter()
+            .map(|mbid| id_pair(NS_ARTIST, mbid))
+            .collect(),
+    }];
+
+    let album = match (&entry.release_mbid, &entry.release_name) {
+        (Some(mbid), Some(title)) if !mbid.is_empty() && !title.is_empty() => Some(AlbumRef {
+            id: mbid.clone(),
+            title: title.clone(),
+            artists: artists.clone(),
+            year: None,
+            images: Vec::new(),
+            album_type: None,
+            edition: None,
+            track_count: None,
+            ids: vec![id_pair(NS_RELEASE, mbid)],
+        }),
+        _ => None,
+    };
+
+    ProviderTrack {
+        id: entry.recording_mbid.clone(),
+        title: entry.recording_name.clone(),
+        artists,
+        album,
+        duration_ms: entry.length,
+        disc_number: None,
+        track_number: None,
+        isrc: None,
+        explicit: None,
+        ids: vec![id_pair(NS_RECORDING, &entry.recording_mbid)],
     }
 }
 
@@ -754,7 +1196,12 @@ mod tests {
             id: "52295596-c761-4871-bd4e-1821862e4288".to_string(),
             title: "Boc Maxima".to_string(),
             date: Some(String::new()),
+            status: Some("Official".to_string()),
+            barcode: None,
+            disambiguation: None,
             track_count: Some(30),
+            artist_credit: Vec::new(),
+            media: Vec::new(),
             release_group: None,
         };
 
@@ -775,7 +1222,8 @@ mod tests {
         assert_eq!(album.id, "6360f948-17d1-4135-a580-34dc200930d8");
         assert_eq!(album.title, "Music Has the Right to Children");
         assert_eq!(album.release_date.as_deref(), Some("1998-08-20"));
-        assert_eq!(album.album_type.as_deref(), Some("Album"));
+        assert_eq!(album.album_type.as_deref(), Some("album"));
+        assert_eq!(album.edition, None);
         assert_eq!(album.upc.as_deref(), Some("744861029922"));
         assert_eq!(album.genres, vec!["electronic"]);
         assert!(album.images.is_empty());
@@ -818,7 +1266,9 @@ mod tests {
         let album = album(&multi_medium_release());
 
         assert_eq!(album.title, "The Cornerstone Player 044");
-        assert_eq!(album.album_type.as_deref(), Some("Album"));
+        // The release group is a compilation, and a secondary type wins over
+        // the group's primary type.
+        assert_eq!(album.album_type.as_deref(), Some("compilation"));
         assert_eq!(album.release_date.as_deref(), Some("2003"));
         // The web service reports an unknown barcode as an empty string.
         assert_eq!(album.upc, None);
@@ -877,6 +1327,10 @@ mod tests {
             artists: Vec::new(),
             year: None,
             images: Vec::new(),
+            album_type: Some("album".to_string()),
+            edition: None,
+            track_count: Some(18),
+            ids: Vec::new(),
         };
 
         let track = track(&source, Some(1), &reference);
@@ -906,6 +1360,10 @@ mod tests {
             artists: Vec::new(),
             year: Some(2003),
             images: Vec::new(),
+            album_type: Some("album".to_string()),
+            edition: None,
+            track_count: Some(4),
+            ids: Vec::new(),
         };
 
         let track = track(&source, Some(2), &reference);
@@ -935,7 +1393,7 @@ mod tests {
     #[test]
     fn maps_an_artist_lookup_into_artist_information() {
         let artist = artist_lookup();
-        let info = artist_info(&artist);
+        let info = artist_info(&artist, None, artist_links(&artist.relations));
 
         assert_eq!(
             id_pairs(&info.ids),
@@ -957,6 +1415,260 @@ mod tests {
                 ("bandcamp", "https://northlight.bandcamp.com/"),
             ]
         );
+    }
+
+    #[test]
+    fn it_links_the_wikipedia_page_a_biography_came_from() {
+        let artist = artist_lookup();
+        let mut links = artist_links(&artist.relations);
+
+        push_link(
+            &mut links,
+            "wikipedia",
+            "https://en.wikipedia.org/wiki/Northlight",
+        );
+        push_link(
+            &mut links,
+            "wikipedia",
+            "https://en.wikipedia.org/wiki/Northlight",
+        );
+        push_link(&mut links, "wikipedia", "");
+
+        // The page a url relation already named is not listed twice, and an
+        // empty url carries no link.
+        assert_eq!(
+            links
+                .iter()
+                .filter(|link| link.url == "https://en.wikipedia.org/wiki/Northlight")
+                .count(),
+            1
+        );
+        assert!(
+            links.iter().all(|link| !link.url.is_empty()),
+            "an empty url carries no link"
+        );
+    }
+
+    #[test]
+    fn artist_information_carries_the_biography_it_was_given() {
+        let artist = artist_lookup();
+        let info = artist_info(
+            &artist,
+            Some("Northlight are a Scottish electronic music duo.".to_string()),
+            artist_links(&artist.relations),
+        );
+
+        assert_eq!(
+            info.biography.as_deref(),
+            Some("Northlight are a Scottish electronic music duo.")
+        );
+        assert_eq!(info.links.len(), 7);
+    }
+
+    #[test]
+    fn an_artist_record_carries_its_ids_its_portrait_and_its_album_count() {
+        let lookup = artist_lookup();
+        let mapped = self::artist(
+            &lookup,
+            vec![commons_portrait("Northlight live 1999.jpg")],
+            Some(9),
+        );
+
+        assert_eq!(mapped.id, "d1f2e3a4-5b6c-4d7e-8f90-1a2b3c4d5e6f");
+        assert_eq!(mapped.name, "Northlight");
+        assert_eq!(mapped.album_count, Some(9));
+        assert_eq!(mapped.images.len(), 1);
+        assert_eq!(mapped.images[0].width, Some(1200));
+        assert_eq!(
+            id_pairs(&mapped.ids),
+            vec![("mb-artist", "d1f2e3a4-5b6c-4d7e-8f90-1a2b3c4d5e6f")]
+        );
+    }
+
+    #[test]
+    fn a_release_listing_entry_becomes_a_reference_with_its_type_and_ids() {
+        let browse: musicbrainz::ReleaseBrowse =
+            serde_json::from_str(include_str!("fixtures/artist_releases.json")).unwrap();
+        let reference = release_ref_from_stub(&browse.releases[0]);
+
+        assert_eq!(reference.id, "3fdcf49c-e297-4c21-880d-dba4c40d98dd");
+        assert_eq!(reference.title, "Music Has the Right to Children");
+        assert_eq!(reference.year, Some(1998));
+        assert_eq!(reference.album_type.as_deref(), Some("album"));
+        assert_eq!(reference.edition, None);
+        // The release's two media hold ten and seven tracks.
+        assert_eq!(reference.track_count, Some(17));
+        assert_eq!(reference.artists[0].name, "Boards of Canada");
+        assert_eq!(
+            id_pairs(&reference.ids),
+            vec![
+                ("mb-release", "3fdcf49c-e297-4c21-880d-dba4c40d98dd"),
+                ("mb-release-group", "17d74d52-c92b-3b8d-9f87-218ab2d1c4a0"),
+                ("upc", "5021603055117"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_reference_reports_the_edition_a_release_names() {
+        let release: musicbrainz::Release =
+            serde_json::from_str(include_str!("fixtures/release_ref.json")).unwrap();
+        let reference = release_ref(&release);
+
+        assert_eq!(reference.id, "1d7d2318-8ac2-34d5-bd5b-ca7aad59e4ba");
+        assert_eq!(reference.album_type.as_deref(), Some("album"));
+        assert_eq!(reference.edition.as_deref(), Some("limited edition"));
+        assert_eq!(reference.track_count, Some(23));
+        assert_eq!(
+            id_pairs(&reference.ids),
+            vec![
+                ("mb-release", "1d7d2318-8ac2-34d5-bd5b-ca7aad59e4ba"),
+                ("mb-release-group", "8183834a-6c8a-39ef-a7bc-a82f79b929e9"),
+                ("upc", "801061810122"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_barcode_search_hit_becomes_a_reference_carrying_its_upc() {
+        let search: musicbrainz::ReleaseSearch =
+            serde_json::from_str(include_str!("fixtures/barcode_release_search.json")).unwrap();
+        let reference = release_ref_from_stub(&search.releases[0]);
+
+        assert_eq!(reference.id, "6360f948-17d1-4135-a580-34dc200930d8");
+        assert_eq!(reference.track_count, Some(18));
+        assert!(id_pairs(&reference.ids).contains(&("upc", "744861029922")));
+    }
+
+    #[test]
+    fn the_album_type_follows_the_release_group() {
+        let group = |primary: Option<&str>, secondary: &[&str]| musicbrainz::ReleaseGroup {
+            id: Some("8183834a-6c8a-39ef-a7bc-a82f79b929e9".to_string()),
+            primary_type: primary.map(str::to_string),
+            secondary_types: secondary.iter().map(|value| value.to_string()).collect(),
+            genres: Vec::new(),
+        };
+
+        assert_eq!(
+            album_type(Some(&group(Some("Album"), &[]))).as_deref(),
+            Some("album")
+        );
+        assert_eq!(
+            album_type(Some(&group(Some("EP"), &[]))).as_deref(),
+            Some("ep")
+        );
+        assert_eq!(
+            album_type(Some(&group(Some("Single"), &[]))).as_deref(),
+            Some("single")
+        );
+        assert_eq!(
+            album_type(Some(&group(Some("Album"), &["Compilation", "Demo"]))).as_deref(),
+            Some("compilation")
+        );
+        assert_eq!(
+            album_type(Some(&group(Some("Album"), &["DJ-mix"]))).as_deref(),
+            Some("dj-mix")
+        );
+        assert_eq!(
+            album_type(Some(&group(Some("Single"), &["Soundtrack"]))).as_deref(),
+            Some("soundtrack")
+        );
+        assert_eq!(
+            album_type(Some(&group(Some("Broadcast"), &[]))).as_deref(),
+            Some("other")
+        );
+        assert_eq!(
+            album_type(Some(&group(Some("Album"), &["Mixtape/Street"]))).as_deref(),
+            Some("other")
+        );
+        assert_eq!(album_type(Some(&group(None, &[]))), None);
+        assert_eq!(album_type(None), None);
+    }
+
+    #[test]
+    fn a_recording_becomes_a_track_pointing_at_its_release() {
+        let recording = recording_lookup();
+        let album = crate::select::earliest_official(&recording.releases)
+            .unwrap()
+            .clone();
+        let track = recording_track(&recording, Some(&album), &recording.isrcs);
+
+        assert_eq!(track.id, recording.id);
+        assert_eq!(track.title, "Wildlife Analysis");
+        assert_eq!(track.duration_ms, Some(77_426));
+        assert_eq!(track.disc_number, None);
+        assert_eq!(track.track_number, None);
+        assert_eq!(track.isrc.as_deref(), Some("GBBPW9800010"));
+        assert_eq!(
+            id_pairs(&track.ids),
+            vec![
+                ("mb-recording", "b061ba14-6b3b-4739-a043-dd4685357af4"),
+                ("isrc", "GBBPW9800010"),
+            ]
+        );
+
+        let reference = track.album.as_ref().unwrap();
+        assert_eq!(reference.title, "Boc Maxima");
+        assert_eq!(reference.year, Some(1996));
+        assert!(id_pairs(&reference.ids).contains(&("mb-release", &reference.id)));
+    }
+
+    #[test]
+    fn a_recording_whose_releases_are_all_promotions_names_no_album() {
+        let search = search();
+        let recording = &search.recordings[0];
+        let track = recording_track(
+            recording,
+            crate::select::first_official(&recording.releases),
+            &[],
+        );
+
+        assert_eq!(track.title, "Roygbiv");
+        assert!(track.album.is_none());
+    }
+
+    #[test]
+    fn an_isrc_adds_its_pairs_to_the_track() {
+        let lookup = isrc_lookup();
+        let recording = &lookup.recordings[0];
+        let track = recording_track(recording, None, &["GBBPW9800010".to_string()]);
+
+        assert_eq!(track.isrc.as_deref(), Some("GBBPW9800010"));
+        assert_eq!(
+            id_pairs(&track.ids),
+            vec![
+                ("mb-recording", "b061ba14-6b3b-4739-a043-dd4685357af4"),
+                ("isrc", "GBBPW9800010"),
+            ]
+        );
+        assert!(track.album.is_none());
+    }
+
+    #[test]
+    fn a_popularity_entry_becomes_a_track_with_the_release_it_names() {
+        let entries: Vec<listenbrainz::RecordingPopularity> =
+            serde_json::from_str(include_str!("fixtures/artist_popularity.json")).unwrap();
+
+        let first = popularity_track(&entries[0]);
+        assert_eq!(first.id, "13dd61c7-ce73-4e97-9f0c-9f0e53144411");
+        assert_eq!(first.title, "Closer");
+        assert_eq!(first.duration_ms, Some(373_133));
+        assert_eq!(first.artists[0].name, "Nine Inch Nails");
+        assert_eq!(
+            id_pairs(&first.artists[0].ids),
+            vec![("mb-artist", "b7ffd2af-418f-4be2-bdd1-22f8b48613da")]
+        );
+        let album = first.album.as_ref().unwrap();
+        assert_eq!(album.id, "ba8701ba-dc7c-4bca-9c83-846ee8c3d576");
+        assert_eq!(album.title, "The Downward Spiral");
+        assert_eq!(
+            id_pairs(&album.ids),
+            vec![("mb-release", album.id.as_str())]
+        );
+
+        let second = popularity_track(&entries[1]);
+        assert!(second.album.is_none());
+        assert_eq!(second.isrc, None);
     }
 
     #[test]

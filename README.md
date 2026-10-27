@@ -1,19 +1,21 @@
 # Hearthsound MusicBrainz plugin
 
-A [Hearthsound](https://github.com/hearthsound) metadata and artwork plugin
-backed by the
-[MusicBrainz web service](https://musicbrainz.org/doc/MusicBrainz_API) and the
-[Cover Art Archive](https://coverartarchive.org). It compiles to a WebAssembly
-component that implements the `metadata` and `artwork` provider interfaces, so
-a Hearthsound server can resolve a recording hint (title, artists, album,
-duration, ISRC) to scored MusicBrainz recordings, materialize a release, with
-its track list, from MusicBrainz ids, read an artist's web links from its
-MusicBrainz id or name, and name the renditions of an album's front cover.
+A [Hearthsound](https://github.com/hearthsound) catalog, metadata and artwork
+plugin backed by the
+[MusicBrainz web service](https://musicbrainz.org/doc/MusicBrainz_API), the
+[Cover Art Archive](https://coverartarchive.org), Wikidata, Wikipedia and
+[ListenBrainz](https://listenbrainz.org). It compiles to a WebAssembly component
+that implements the `catalog`, `metadata` and `artwork` provider interfaces, so
+a Hearthsound server can search MusicBrainz, resolve a recording hint (title,
+artists, album, duration, ISRC) to scored MusicBrainz recordings, materialize a
+release with its track list, read an artist's discography, most played tracks,
+web links and biography, and name the renditions of an album's front cover and
+of an artist's portrait.
 
 The plugin needs no MusicBrainz account and no API key: every endpoint it calls
-is part of the public web service, and the covers it names are part of the
-Cover Art Archive. It never fetches image bytes itself, because the server
-reads an image through the instance that named it.
+is part of a public service, and the images it names are served by the Cover Art
+Archive and Wikimedia Commons. It never fetches image bytes itself, because the
+server reads an image through the instance that named it.
 
 ## Requirements
 
@@ -28,14 +30,14 @@ cargo build --release --locked --target wasm32-wasip2
 
 The component lands at
 `target/wasm32-wasip2/release/hearthsound_plugin_musicbrainz.wasm`. It exports
-the `metadata` and `artwork` provider interfaces.
+the `catalog`, `metadata` and `artwork` provider interfaces.
 
 ## Check and pack
 
 Install the plugin CLI from the SDK repository:
 
 ```console
-cargo install --locked --git https://github.com/hearthsound/plugin-sdk --tag v0.4.0 hearthsound-plugin-cli
+cargo install --locked --git https://github.com/hearthsound/plugin-sdk --tag v0.5.0 hearthsound-plugin-cli
 ```
 
 Then validate the manifest and the component:
@@ -44,8 +46,8 @@ Then validate the manifest and the component:
 hsplugin check
 ```
 
-It prints `ok: app.hearthsound.musicbrainz 0.4.0 (provides metadata, artwork)`
-on success.
+It prints `ok: app.hearthsound.musicbrainz 0.5.0 (provides catalog, metadata,
+artwork)` on success.
 
 Finally, build the archive you install on a server:
 
@@ -53,13 +55,13 @@ Finally, build the archive you install on a server:
 hsplugin pack --out-dir dist
 ```
 
-`dist/app.hearthsound.musicbrainz-0.4.0.hsplugin` contains the manifest and the
+`dist/app.hearthsound.musicbrainz-0.5.0.hsplugin` contains the manifest and the
 component.
 
 ## Tests
 
-The query building, scoring, mapping and artwork lookup logic runs on the host
-target, so its unit tests need no WebAssembly toolchain and no network:
+The query building, scoring, listing selection, mapping and cache logic runs on
+the host target, so its unit tests need no WebAssembly toolchain and no network:
 
 ```console
 cargo test
@@ -71,19 +73,80 @@ cargo test
 |---|---|---|
 | `baseUrl` | `https://musicbrainz.org/ws/2/` | Base URL of the MusicBrainz web service. Point it at a mirror to keep traffic off `musicbrainz.org`. |
 | `artworkBaseUrl` | `https://coverartarchive.org/` | Base URL of the Cover Art Archive. Point it at a mirror to keep traffic off `coverartarchive.org`. |
+| `wikipediaLanguage` | `en` | Language code of the Wikipedia edition artist biographies are read from, for example `de` or `pt`. |
 
 A base URL that does not end in a slash is normalized to one, so the endpoint
-paths the plugin appends always land on the service root. The manifest grants
-the plugin the `musicbrainz.org` and Cover Art Archive hosts plus whichever
-hosts the two settings name.
+paths the plugin appends always land on the service root. A language code must
+be two or three lowercase letters.
 
-The instance requests a `host-http` rate limit of one request per second with a
-burst of one, which is the average MusicBrainz publishes and covers the Cover
-Art Archive requests too. The limit is enforced by the host, because exceeding
-the average answers `503` to every caller of the IP, not only to the plugin
-(https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting).
+The manifest grants the plugin `musicbrainz.org`, the Cover Art Archive,
+`archive.org`, Wikidata, any Wikipedia edition, Wikimedia Commons,
+`upload.wikimedia.org` and `api.listenbrainz.org`, plus whichever hosts the two
+URL settings name.
+
+MusicBrainz publishes an average of one request per second, so the manifest
+gives `musicbrainz.org` and the configured `baseUrl` a limit of one request per
+second with a burst of one, and every other host the instance-wide limit of five
+per second with a burst of five. The limits are enforced by the host, because
+exceeding MusicBrainz's average answers `503` to every caller of the IP, not
+only to the plugin (https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting).
 
 ## Behavior
+
+### Catalog
+
+`search` asks the indexes of the kinds the caller named and answers the page the
+caller asked for: `GET /recording?query=...`, `GET /release?query=...
+&inc=release-groups` and `GET /artist?query=...`. A track points at the first
+official release the hit listed, an artist carries no images (a portrait per hit
+would cost a Wikidata request), and the release hits are reduced to one release
+per release group, keeping the group's earliest dated official release, because
+the index answers with every pressing of an album. An empty text or a zero limit
+sends no request.
+
+`get-track` reads `GET /recording/{mbid}?inc=artist-credits+releases+isrcs` and
+points the track at the earliest official release of its release list.
+`get-album` materializes a release with its track list, exactly as
+`get-release` does below. `get-artist` reads
+`GET /artist/{mbid}?inc=url-rels`, adds the portrait Wikidata names for the
+artist, and reports the album count an earlier `artist-albums` call counted; it
+never counts the discography itself, because the caller asks for that
+separately.
+
+`artist-albums` browses `GET /release?artist={id}&status=official&
+type=album|ep|single&inc=release-groups+artist-credits+media` page by page,
+because the web service can only page releases and not release groups. Each
+release group is represented by its earliest official release, and the answer is
+sliced to the page the caller asked for. One page holds 100 releases and the
+scan reads at most ten pages, so a request for a huge discography stays bounded.
+When the listing was read to its end the number of release groups is cached, so
+the next `get-artist` reports it.
+
+`artist-top-tracks` reads the artist's most played recordings from
+`GET https://api.listenbrainz.org/1/popularity/top-recordings-for-artist/{mbid}`
+and slices the list to the caller's limit. A recording ListenBrainz does not tie
+to a release is reported without an album.
+
+`lookup-isrc` resolves an ISRC to the recordings assigned to it, and
+`lookup-album` resolves canonical ids to the albums the web service holds: an
+`mb-release` id names a release, an `mb-release-group` id resolves to the
+group's earliest official release, and a `upc` searches
+`GET /release?query=barcode:<upc>` and takes the first hit. An id in another
+namespace is skipped, an album the service does not know is skipped rather than
+failing the call, and the answer holds one reference per album in the order of
+the ids.
+
+### Album type and edition
+
+An album's type is lowercase and follows its release group: `album`, `ep` or
+`single` from the group's primary type, unless the group carries a secondary type
+(`compilation`, `live`, `remix`, `soundtrack`, `dj-mix`, `demo`, `broadcast` or
+`other`), which wins, because a compilation or a live album is what the listener
+needs to see. A primary type outside those three names is reported as `other`.
+An album's edition is the web service's own disambiguation of the pressing, when
+it has one, which is the only way MusicBrainz names an edition.
+
+### Metadata
 
 `resolve-recording` resolves a recording hint to scored MusicBrainz recordings,
 best score first:
@@ -113,45 +176,65 @@ The server treats 0.9 or more as a confident first match.
 `get-release` materializes an album from an `mb-release` id, or, when the caller
 only has an `mb-release-group` id, from the earliest official release of that
 group (an undated release sorts after every dated one). The album carries the
-release id and title, its artists, release date, the primary type of its release
-group, its barcode as the UPC, its genres (or the release group's when the
-release has none), and every track of every medium with the medium position as
-the disc number, the track position as the track number, the recording id and
-the track's first ISRC. The album's images are empty, because the server asks
-the artwork layer for a cover instead.
+release id and title, its artists, release date, its album type, its edition,
+its barcode as the UPC, its genres (or the release group's when the release has
+none), and every track of every medium with the medium position as the disc
+number, the track position as the track number, the recording id and the track's
+first ISRC. The album's images are empty, because the server asks the artwork
+layer for a cover instead.
 
-`get-artist-info` reads an artist's web pages. A request that carries an
-`mb-artist` id is looked up directly through `GET /artist/{mbid}?inc=url-rels`;
-a request that carries only a name goes through
-`GET /artist?query=artist:"<name>"` and takes the first hit that spells the name
-the same way, ignoring case, and that the index scored at least 90, so a
-namesake, a tribute act or a loosely similar name is not mistaken for the
+`get-artist-info` reads an artist's web pages and its biography. A request that
+carries an `mb-artist` id is looked up directly through
+`GET /artist/{mbid}?inc=url-rels`; a request that carries only a name goes
+through `GET /artist?query=artist:"<name>"` and takes the first hit that spells
+the name the same way, ignoring case, and that the index scored at least 90, so
+a namesake, a tribute act or a loosely similar name is not mistaken for the
 artist. The answer carries the `mb-artist` id and one link per mapped relation
 (`official homepage` as `homepage`, plus `wikipedia`, `wikidata`, `last.fm`,
 `discogs`, `allmusic` and `bandcamp`); every other relation type is dropped. The
-biography is empty, because MusicBrainz publishes none. An artist that neither
-an id nor a qualifying hit names is answered with no information rather than an
-error.
+biography is the first paragraph of the artist's Wikipedia page: the `wikidata`
+url relation names the artist's Wikidata item, the item's sitelink names the page
+in `wikipediaLanguage` (falling back to the English sitelink and then to the
+`wikipedia` url relation), and `GET /api/rest_v1/page/summary/<title>` on that
+edition carries the text. The page is added as a `wikipedia` link when the url
+relations did not already name it. An artist that neither an id nor a qualifying
+hit names is answered with no information rather than an error.
+
+### Artwork
 
 `find-artwork` names the Cover Art Archive renditions of an album's front cover,
 narrowest first: 250, 500 and 1200 pixels wide. The renditions follow what the
-subject carries. An `mb-release` id has its cover at
+album subject carries. An `mb-release` id has its cover at
 `/release/<mbid>/front-<width>` and an `mb-release-group` id at
 `/release-group/<mbid>/front-<width>`. A `upc` goes through
 `GET /release?query=barcode:<upc>` and the release of the first result is used.
 Anything else goes through
 `GET /release-group?query=releasegroup:"<title>" AND artist:"<first artist>"`,
 where the first hit the index scored at least 90 wins, so a similarly named
-album is not mistaken for the one the subject names. No lookup that finds
-nothing is an error: it is an empty list, and so is every artist subject,
-because the Cover Art Archive holds no portraits. A lookup result is cached in
-the instance's key-value store for 30 days, and a lookup that found nothing for
-one day, so an album grid costs a request only the first time it is drawn.
+album is not mistaken for the one the subject names.
+
+An artist subject is served from Wikimedia Commons: the `mb-artist` id (or the
+instance's own id for the artist) reads the artist's url relations, their
+`wikidata` relation names the item, the item's `P18` claim names the file, and
+Commons serves it at
+`https://commons.wikimedia.org/wiki/Special:FilePath/<file>?width=1200`. A track
+or playlist subject is answered with an empty list.
+
+No lookup that finds nothing is an error: it is an empty list. A lookup result
+is cached in the instance's key-value store for 30 days, a lookup that found
+nothing for one day, and so are the Wikidata entity and Wikipedia summary of an
+artist, so an album grid or an artist page costs a request only the first time
+it is read.
+
+### Errors
 
 Errors follow the provider contract: `404` is a not-found, `429` and the `503`
 MusicBrainz answers an exceeded request rate with are rate-limited (with the
 `Retry-After` delay when the response carries one, and one second otherwise),
-and every other failure is unavailable or internal.
+and every other failure is unavailable or internal. A biography or portrait
+that fails for a reason other than the service being unavailable costs that
+part of the answer and is logged; the identity and the links are still
+reported.
 
 ## Notes
 
@@ -169,21 +252,29 @@ and every other failure is unavailable or internal.
   the smallest request the web service serves.
 - A hint without a title is not searchable and resolves to no matches; that is
   an empty result, not an error.
+- The module-level log macros are no-ops on the host target, which has no
+  `host-log` import, so the unit tests exercise the same code the component runs.
 
 ## Layout
 
 | Path | Contents |
 |---|---|
 | `Cargo.toml` | Crate metadata and the SDK dependency. |
-| `src/lib.rs` | The plugin: configuration, lifecycle, and the metadata and artwork interfaces. |
+| `src/lib.rs` | The plugin: configuration, lifecycle, and the catalog, metadata and artwork interfaces. |
 | `src/api.rs` | The HTTP transport and MusicBrainz's error statuses. |
-| `src/metadata.rs` | One function per metadata operation, over the API endpoints. |
-| `src/artwork.rs` | The Cover Art Archive lookups and the cache of their results. |
+| `src/catalog.rs` | One function per catalog operation. |
+| `src/metadata.rs` | One function per metadata operation. |
+| `src/artwork.rs` | The album cover and artist portrait lookups. |
+| `src/cache.rs` | The typed key-value cache and its time to live. |
+| `src/wikimedia.rs` | Wikidata entities and Wikipedia page summaries. |
+| `src/paths.rs` | The path of every web service endpoint. |
+| `src/select.rs` | Which release of a listing the plugin reports. |
 | `src/musicbrainz.rs` | Serde types for the web service responses. |
+| `src/listenbrainz.rs` | Serde types for the popularity endpoint. |
 | `src/map.rs` | MusicBrainz records to provider records. |
 | `src/query.rs` | Lucene query construction and escaping. |
 | `src/score.rs` | Match scoring for recording candidates. |
-| `src/url.rs` | Base URL validation and query encoding. |
+| `src/url.rs` | Base URL validation, URL helpers and encoding. |
 | `src/fixtures/` | Captured web service responses the unit tests run on. |
 | `manifest.json` | The plugin manifest the server reads. |
 

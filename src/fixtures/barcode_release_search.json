@@ -1,0 +1,36 @@
+{
+  "created": "2026-10-27T06:43:23.090Z",
+  "count": 1,
+  "offset": 0,
+  "releases": [
+    {
+      "id": "6360f948-17d1-4135-a580-34dc200930d8",
+      "score": 100,
+      "title": "Music Has the Right to Children",
+      "status": "Official",
+      "date": "1998-08-20",
+      "country": "US",
+      "barcode": "744861029922",
+      "track-count": 18,
+      "disambiguation": "",
+      "artist-credit": [
+        {
+          "name": "Boards of Canada",
+          "artist": {
+            "id": "69158f97-4c07-4c4e-baf8-4e4ab1ed666e",
+            "name": "Boards of Canada",
+            "sort-name": "Boards of Canada",
+            "disambiguation": "Scottish electronic duo"
+          }
+        }
+      ],
+      "release-group": {
+        "id": "17d74d52-c92b-3b8d-9f87-218ab2d1c4a0",
+        "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+        "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+        "title": "Music Has the Right to Children",
+        "primary-type": "Album"
+      }
+    }
+  ]
+}

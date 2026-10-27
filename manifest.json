@@ -2,24 +2,29 @@
   "manifestVersion": 1,
   "id": "app.hearthsound.musicbrainz",
   "name": "MusicBrainz metadata",
-  "version": "0.4.0",
-  "description": "Resolve recordings and materialize releases from the MusicBrainz web service, without an account or an API key.",
+  "version": "0.5.0",
+  "description": "Search, resolve and illustrate music from the MusicBrainz web service, without an account or an API key.",
   "authors": ["Hearthsound contributors"],
   "license": "MIT OR Apache-2.0",
   "homepage": "https://github.com/hearthsound/plugin-musicbrainz",
-  "api": "hearthsound:plugin@0.4.0",
-  "provides": ["metadata", "artwork"],
+  "api": "hearthsound:plugin@0.5.0",
+  "provides": ["catalog", "metadata", "artwork"],
   "permissions": {
     "http": {
       "hosts": [
-        "musicbrainz.org",
+        { "host": "musicbrainz.org", "rateLimit": { "perSecond": 1, "burst": 1 } },
         "coverartarchive.org",
         "archive.org",
         "*.archive.org",
-        "$config:baseUrl",
+        "www.wikidata.org",
+        "*.wikipedia.org",
+        "commons.wikimedia.org",
+        "upload.wikimedia.org",
+        "api.listenbrainz.org",
+        { "host": "$config:baseUrl", "rateLimit": { "perSecond": 1, "burst": 1 } },
         "$config:artworkBaseUrl"
       ],
-      "rateLimit": { "perSecond": 1, "burst": 1 }
+      "rateLimit": { "perSecond": 5, "burst": 5 }
     }
   },
   "config": {
@@ -41,6 +46,13 @@
             "title": "Cover Art Archive base URL",
             "description": "Base URL of the Cover Art Archive. Point it at a mirror to keep traffic off coverartarchive.org; a value without a trailing slash gets one.",
             "default": "https://coverartarchive.org"
+          },
+          "wikipediaLanguage": {
+            "type": "string",
+            "pattern": "^[a-z]{2,3}$",
+            "title": "Wikipedia language",
+            "description": "Language code of the Wikipedia edition artist biographies are read from, for example en, de or pt. An artist whose Wikidata item has no page in this edition falls back to the English one.",
+            "default": "en"
           }
         }
       },
@@ -48,7 +60,8 @@
         "type": "VerticalLayout",
         "elements": [
           { "type": "Control", "scope": "#/properties/baseUrl" },
-          { "type": "Control", "scope": "#/properties/artworkBaseUrl" }
+          { "type": "Control", "scope": "#/properties/artworkBaseUrl" },
+          { "type": "Control", "scope": "#/properties/wikipediaLanguage" }
         ]
       }
     },

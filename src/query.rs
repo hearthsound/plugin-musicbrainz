@@ -135,6 +135,39 @@ pub fn recording_query(
     Some(terms.join(" AND "))
 }
 
+/// Builds the Lucene query of a free-text catalog search.
+///
+/// The search text names no field, so the index matches it against every field
+/// it indexes; the operators are escaped so the text constrains the query
+/// rather than extending it.
+///
+/// # Parameters
+///
+/// - `text`: the text the caller searched for.
+///
+/// # Returns
+///
+/// The query text, or `None` when the text is empty or only whitespace and
+/// there is nothing to search for. The caller must URL-encode the result with
+/// [`encode_component`](crate::url::encode_component) before putting it in a
+/// request.
+///
+/// # Example
+///
+/// ```text
+/// search_text(" Boards of Canada ") -> Some("Boards of Canada")
+/// search_text("AC/DC")              -> Some("AC\\/DC")
+/// search_text("   ")                -> None
+/// ```
+pub fn search_text(text: &str) -> Option<String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+
+    Some(escape_lucene(text))
+}
+
 /// Builds the Lucene query for the release that carries a barcode.
 ///
 /// # Parameters
@@ -315,6 +348,18 @@ mod tests {
             .unwrap(),
             "recording:\"Rock \\(Remix\\)\" AND artist:\"AC\\/DC\" AND release:\"Live\\! \\[2024\\]\" AND dur:[195000 TO 205000]"
         );
+    }
+
+    #[test]
+    fn a_free_text_search_keeps_its_words_and_escapes_its_operators() {
+        assert_eq!(
+            search_text(" Boards of Canada ").unwrap(),
+            "Boards of Canada"
+        );
+        assert_eq!(search_text("AC/DC").unwrap(), "AC\\/DC");
+        assert_eq!(search_text("Rock (Remix)").unwrap(), "Rock \\(Remix\\)");
+        assert_eq!(search_text(""), None);
+        assert_eq!(search_text("   "), None);
     }
 
     #[test]

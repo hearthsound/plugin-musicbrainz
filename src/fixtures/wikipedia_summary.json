@@ -1,0 +1,46 @@
+{
+  "type": "standard",
+  "title": "Northlight",
+  "displaytitle": "Northlight",
+  "namespace": { "id": 0, "text": "" },
+  "wikibase_item": "Q1000000",
+  "titles": {
+    "canonical": "Northlight",
+    "normalized": "Northlight",
+    "display": "Northlight"
+  },
+  "pageid": 1000000,
+  "thumbnail": {
+    "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/00/Northlight_live_1999.jpg/320px-Northlight_live_1999.jpg",
+    "width": 320,
+    "height": 240
+  },
+  "originalimage": {
+    "source": "https://upload.wikimedia.org/wikipedia/commons/0/00/Northlight_live_1999.jpg",
+    "width": 1200,
+    "height": 900
+  },
+  "lang": "en",
+  "dir": "ltr",
+  "revision": "1284000000",
+  "tid": "aaaaaaaa-bbbb-11cc-8ddd-eeeeeeeeeeee",
+  "timestamp": "2026-10-16T00:00:00Z",
+  "description": "Scottish electronic music duo",
+  "description_source": "central",
+  "content_urls": {
+    "desktop": {
+      "page": "https://en.wikipedia.org/wiki/Northlight",
+      "revisions": "https://en.wikipedia.org/wiki/Northlight?action=history",
+      "edit": "https://en.wikipedia.org/wiki/Northlight?action=edit",
+      "talk": "https://en.wikipedia.org/wiki/Talk:Northlight"
+    },
+    "mobile": {
+      "page": "https://en.m.wikipedia.org/wiki/Northlight",
+      "revisions": "https://en.m.wikipedia.org/wiki/Special:History/Northlight",
+      "edit": "https://en.m.wikipedia.org/wiki/Northlight?action=edit",
+      "talk": "https://en.m.wikipedia.org/wiki/Talk:Northlight"
+    }
+  },
+  "extract": "Northlight are a Scottish electronic music duo formed in 1986 in Edinburgh, known for slow, tape-saturated instrumentals and for naming their releases after colours.",
+  "extract_html": "<p><b>Northlight</b> are a Scottish electronic music duo formed in 1986 in Edinburgh.</p>"
+}

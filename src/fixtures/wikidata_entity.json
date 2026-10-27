@@ -1,0 +1,77 @@
+{
+  "entities": {
+    "Q1000000": {
+      "pageid": 1000000,
+      "ns": 0,
+      "title": "Q1000000",
+      "lastrevid": 2400000000,
+      "modified": "2026-10-16T00:00:00Z",
+      "type": "item",
+      "id": "Q1000000",
+      "labels": {
+        "en": { "language": "en", "value": "Northlight" }
+      },
+      "descriptions": {
+        "en": { "language": "en", "value": "Scottish electronic music duo" }
+      },
+      "aliases": {},
+      "claims": {
+        "P18": [
+          {
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P18",
+              "hash": "c1ffe72561010e91cdd1999d5fccd45d8188ccea",
+              "datavalue": {
+                "value": "Northlight live 1999.jpg",
+                "type": "string"
+              },
+              "datatype": "commonsMedia"
+            },
+            "type": "statement",
+            "id": "Q1000000$85247CBF-F062-45D8-9C9B-9783EA2668D7",
+            "rank": "normal"
+          }
+        ],
+        "P434": [
+          {
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P434",
+              "hash": "d1f2e3a4",
+              "datavalue": {
+                "value": "d1f2e3a4-5b6c-4d7e-8f90-1a2b3c4d5e6f",
+                "type": "string"
+              },
+              "datatype": "external-id"
+            },
+            "type": "statement",
+            "id": "Q1000000$11111111-2222-4333-8444-555555555555",
+            "rank": "normal"
+          }
+        ]
+      },
+      "sitelinks": {
+        "commonswiki": {
+          "site": "commonswiki",
+          "title": "Category:Northlight",
+          "badges": [],
+          "url": "https://commons.wikimedia.org/wiki/Category:Northlight"
+        },
+        "dewiki": {
+          "site": "dewiki",
+          "title": "Northlight (Band)",
+          "badges": [],
+          "url": "https://de.wikipedia.org/wiki/Northlight_(Band)"
+        },
+        "enwiki": {
+          "site": "enwiki",
+          "title": "Northlight",
+          "badges": [],
+          "url": "https://en.wikipedia.org/wiki/Northlight"
+        }
+      }
+    }
+  },
+  "success": 1
+}

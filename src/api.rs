@@ -3,7 +3,7 @@
 //!
 //! This is the only module that touches the network. It builds one request,
 //! sends it, and turns the response into either a decoded payload or a provider
-//! error; endpoint composition lives in [`crate::metadata`] and the translation
+//! error; endpoint composition lives in [`crate::paths`] and the translation
 //! into provider records in [`crate::map`].
 //!
 //! The plugin sets no `User-Agent` header, so the host adds the meaningful one
@@ -64,14 +64,32 @@ pub(crate) fn get_json<T: DeserializeOwned>(
     base_url: &str,
     path: &str,
 ) -> Result<T, ProviderError> {
-    let endpoint = url::endpoint(base_url, path);
+    get_json_at(&url::endpoint(base_url, path))
+}
 
-    let mut request = http::get(&endpoint);
+/// Sends a GET request to an absolute URL and decodes the JSON body.
+///
+/// Wikidata, Wikipedia and ListenBrainz are read at URLs of their own rather
+/// than under the configured web service, so their endpoints are built whole.
+///
+/// # Parameters
+///
+/// - `endpoint`: the absolute URL of the endpoint, already query-encoded.
+///
+/// # Returns
+///
+/// The decoded response body.
+///
+/// # Errors
+///
+/// Returns the same errors as [`get_json`].
+pub(crate) fn get_json_at<T: DeserializeOwned>(endpoint: &str) -> Result<T, ProviderError> {
+    let mut request = http::get(endpoint);
     request.timeout_ms = Some(REQUEST_TIMEOUT_MS);
 
     let response = http::send(&request)?;
 
-    decode(&response, &endpoint)
+    decode(&response, endpoint)
 }
 
 /// Decodes one web service response.

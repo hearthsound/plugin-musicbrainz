@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-27
+
+### Added
+
+- The catalog layer: `search`, `get-track`, `get-album`, `get-artist`,
+  `artist-albums`, `artist-top-tracks`, `lookup-isrc` and `lookup-album` over the
+  MusicBrainz web service, with the artist's most played recordings read from
+  ListenBrainz. A release search and a discography list one release per release
+  group, represented by the group's earliest official release, and report the
+  album type, the edition, the track count and the canonical ids of that
+  release.
+- Artist biographies: `get-artist-info` reads the artist's Wikidata item, the
+  page its sitelinks name in the configured Wikipedia edition and that page's
+  first paragraph, and reports the page as a link. The `wikipediaLanguage`
+  instance setting picks the edition (default `en`).
+- Artist portraits through the artwork interface: an artist subject is served
+  from Wikimedia Commons at the file Wikidata names with property `P18`,
+  1200 pixels wide.
+- Per-host rate limits in the manifest: MusicBrainz and the configured base URL
+  keep the published average of one request per second, and the other hosts
+  share the instance-wide five per second.
+
+### Changed
+
+- Build against the `hearthsound:plugin@0.5.0` API (plugin-sdk v0.5.0) and
+  export the `catalog_metadata_artwork_provider` world; `provides` is now
+  catalog, metadata and artwork.
+- The cache of resolved lookups and the cache of Wikidata and Wikipedia answers
+  share one typed key-value store with the existing found and missing lifetimes.
+- The endpoint paths, the release selection rules and the URL helpers moved
+  into modules of their own, and the log macros are no-ops on the host target so
+  the unit tests exercise the same code the component runs.
+- A release listing entry and a release lookup both report the album reference
+  of a record, and an album's `album_type` is the lowercase type the API
+  documents.
+
 ## [0.4.0] - 2026-10-25
 
 ### Changed
@@ -72,7 +108,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A CI workflow that formats, lints, tests, builds, checks and packs the
   plugin, and uploads the archive.
 
-[Unreleased]: https://github.com/hearthsound/plugin-musicbrainz/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/hearthsound/plugin-musicbrainz/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/hearthsound/plugin-musicbrainz/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/hearthsound/plugin-musicbrainz/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/hearthsound/plugin-musicbrainz/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/hearthsound/plugin-musicbrainz/compare/v0.1.0...v0.2.0

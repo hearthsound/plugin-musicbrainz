@@ -1,31 +1,19 @@
 //! The metadata operations, one function per web service endpoint group.
 //!
-//! Each function composes a path, calls [`crate::api`] and translates the
-//! payload with [`crate::map`]. The functions are thin on purpose: the
-//! interesting logic is the path building and the choice between the ISRC
-//! lookup and the search, which are tested here directly, and the translation,
-//! which is tested in [`crate::map`].
+//! Each function composes a path with [`crate::paths`], calls [`crate::api`]
+//! and translates the payload with [`crate::map`]. The functions are thin on
+//! purpose: the interesting logic is the choice between the ISRC lookup and the
+//! search, and the biography an artist lookup gains from Wikidata and
+//! Wikipedia, which are tested here directly; the translation is tested in
+//! [`crate::map`].
 
-use hearthsound_plugin::metadata_artwork_provider::exports::hearthsound::plugin::metadata::{
+use hearthsound_plugin::catalog_metadata_artwork_provider::exports::hearthsound::plugin::metadata::{
     ArtistInfo, ArtistInfoRequest, RecordingHint, RecordingMatch,
 };
 use hearthsound_plugin::types::{Album, IdPair, ProviderError};
 
-use crate::{api, map, musicbrainz, query, score, url};
-
-/// Number of releases the release group browse asks for per page.
-///
-/// It is the web service's maximum page size, so a group with at most this many
-/// official releases is read with one request.
-const RELEASE_LIMIT: u32 = 100;
-
-/// Number of browse pages the earliest-release scan reads at most.
-///
-/// A release group rarely holds more than one page of official releases, and
-/// every further page is another request at the web service's 1 request/s
-/// average. A group with more releases than this many pages hold is scanned on
-/// its first pages only, and the scan logs that it stopped at the cap.
-const EARLIEST_RELEASE_PAGES: u32 = 5;
+use crate::cache::Store;
+use crate::{api, map, musicbrainz, paths, query, score, select, url, wikimedia};
 
 /// Number of ISRC lookup hits whose releases are fetched one by one.
 ///
@@ -34,13 +22,6 @@ const EARLIEST_RELEASE_PAGES: u32 = 5;
 /// recordings would fan out without bound. The first few hits carry the
 /// identity evidence; the rest are read without their releases.
 const ISRC_DETAIL_LIMIT: usize = 5;
-
-/// Number of artists an artist search asks for.
-///
-/// A search for an artist name returns homages, cover bands and namesakes
-/// before or after the artist itself, and the web service orders them by
-/// relevance, so the first few hits are the only ones worth reading.
-const ARTIST_SEARCH_LIMIT: u32 = 5;
 
 /// Relevance an artist search hit must reach to name the requested artist.
 ///
@@ -76,7 +57,7 @@ const ARTIST_SEARCH_SCORE: f32 = 90.0;
 /// lookup that cannot be enriched with its releases is reported with an empty
 /// release list rather than as an error, because the recording id is still the
 /// identity the caller asked for.
-pub(crate) fn resolve_recording(
+pub fn resolve_recording(
     base_url: &str,
     hint: &RecordingHint,
 ) -> Result<Vec<RecordingMatch>, ProviderError> {
@@ -118,7 +99,7 @@ pub(crate) fn resolve_recording(
 /// `mb-release` nor an `mb-release-group` pair, when the release group has no
 /// official release, and when the web service does not know the release; the
 /// provider error of the request that failed otherwise.
-pub(crate) fn get_release(base_url: &str, ids: &[IdPair]) -> Result<Album, ProviderError> {
+pub fn get_release(base_url: &str, ids: &[IdPair]) -> Result<Album, ProviderError> {
     let release_id = match ids.iter().find(|pair| pair.namespace == map::NS_RELEASE) {
         Some(pair) => pair.value.clone(),
         None => {
@@ -126,7 +107,7 @@ pub(crate) fn get_release(base_url: &str, ids: &[IdPair]) -> Result<Album, Provi
                 .iter()
                 .find(|pair| pair.namespace == map::NS_RELEASE_GROUP)
             else {
-                hearthsound_plugin::debug!("no MusicBrainz release or release group id in {ids:?}");
+                debug!("no MusicBrainz release or release group id in {ids:?}");
                 return Err(ProviderError::NotFound);
             };
 
@@ -134,8 +115,8 @@ pub(crate) fn get_release(base_url: &str, ids: &[IdPair]) -> Result<Album, Provi
         }
     };
 
-    let release: musicbrainz::Release = api::get_json(base_url, &release_path(&release_id))?;
-    hearthsound_plugin::debug!(
+    let release: musicbrainz::Release = api::get_json(base_url, &paths::release_path(&release_id))?;
+    debug!(
         "read release {} with {} media",
         release.id,
         release.media.len()
@@ -155,35 +136,58 @@ pub(crate) fn get_release(base_url: &str, ids: &[IdPair]) -> Result<Album, Provi
 /// # Parameters
 ///
 /// - `base_url`: base URL of the web service.
+/// - `store`: the cache Wikidata and Wikipedia answers are read from.
+/// - `language`: the Wikipedia language the biography is read from.
 /// - `request`: the artist the caller wants information on.
 ///
 /// # Returns
 ///
-/// The artist's information, or `None` when the id or the name found no
-/// artist. The web service has no biography, so the information carries the
-/// `mb-artist` id and the artist's url relations.
+/// The artist's information, or `None` when the id or the name found no artist.
+/// The information carries the `mb-artist` id, the links of the artist's url
+/// relations, the Wikipedia page a biography was read from as one more link,
+/// and that page's first paragraph as the biography.
 ///
 /// # Errors
 ///
-/// Returns the provider error of the request that failed. A name no search hit
-/// answers is `None`, not an error.
-pub(crate) fn artist_info(
+/// Returns the provider error of a request that failed for a transient reason -
+/// the web service being unavailable or asking the caller to slow down. A
+/// biography request that fails for any other reason costs the biography and is
+/// logged, because the artist's identity and links are still worth answering.
+/// A name no search hit answers is `None`, not an error.
+pub fn artist_info(
     base_url: &str,
+    store: &dyn Store,
+    language: &str,
     request: &ArtistInfoRequest,
 ) -> Result<Option<ArtistInfo>, ProviderError> {
     let Some(mbid) = artist_mbid(base_url, request)? else {
-        hearthsound_plugin::debug!("no MusicBrainz artist matches {:?}", request.name);
+        debug!("no MusicBrainz artist matches {:?}", request.name);
         return Ok(None);
     };
 
-    let artist: musicbrainz::ArtistLookup = api::get_json(base_url, &artist_path(&mbid))?;
-    hearthsound_plugin::debug!(
+    let artist: musicbrainz::ArtistLookup = api::get_json(base_url, &paths::artist_path(&mbid))?;
+    debug!(
         "read artist {} with {} relations",
         artist.id,
         artist.relations.len()
     );
 
-    Ok(Some(map::artist_info(&artist)))
+    let mut links = map::artist_links(&artist.relations);
+    let mut biography = None;
+
+    match wikimedia::biography(store, language, &artist.relations) {
+        Ok(Some(read)) => {
+            map::push_link(&mut links, "wikipedia", &read.url);
+            biography = read.extract;
+        }
+        Ok(None) => {}
+        Err(error) if transient(&error) => return Err(error),
+        Err(error) => {
+            warn!("no biography for {}: {error:?}", artist.name);
+        }
+    }
+
+    Ok(Some(map::artist_info(&artist, biography, links)))
 }
 
 /// Probes the web service with the smallest request it serves.
@@ -203,8 +207,8 @@ pub(crate) fn artist_info(
 /// # Errors
 ///
 /// Returns the provider error of the request.
-pub(crate) fn health(base_url: &str) -> Result<(), ProviderError> {
-    let _page: musicbrainz::GenrePage = api::get_json(base_url, &health_path())?;
+pub fn health(base_url: &str) -> Result<(), ProviderError> {
+    let _page: musicbrainz::GenrePage = api::get_json(base_url, &paths::health_path())?;
 
     Ok(())
 }
@@ -230,24 +234,24 @@ fn isrc_matches(
     isrc: &str,
     hint: &RecordingHint,
 ) -> Result<Option<Vec<RecordingMatch>>, ProviderError> {
-    let lookup: musicbrainz::IsrcLookup = match api::get_json(base_url, &isrc_path(isrc)) {
+    let lookup: musicbrainz::IsrcLookup = match api::get_json(base_url, &paths::isrc_path(isrc)) {
         Ok(lookup) => lookup,
         Err(ProviderError::NotFound) => return Ok(None),
         Err(error) => return Err(error),
     };
 
     let read = details(&lookup.recordings, |id| {
-        api::get_json::<musicbrainz::Recording>(base_url, &recording_path(id))
+        api::get_json::<musicbrainz::Recording>(base_url, &paths::recording_path(id))
     })?;
 
     for id in &read.skipped {
-        hearthsound_plugin::debug!(
+        debug!(
             "recording {id} read without its releases: {ISRC_DETAIL_LIMIT} detail fetches already done"
         );
     }
 
     for (id, error) in &read.dropped {
-        hearthsound_plugin::warn!("no releases for recording {id}: {error:?}");
+        warn!("no releases for recording {id}: {error:?}");
     }
 
     let mut matches = Vec::with_capacity(lookup.recordings.len());
@@ -409,12 +413,13 @@ fn search_matches(
         hint.album.as_deref(),
         hint.duration_ms,
     ) else {
-        hearthsound_plugin::debug!("recording hint without a title is not searchable");
+        debug!("recording hint without a title is not searchable");
         return Ok(Vec::new());
     };
 
-    let search: musicbrainz::RecordingSearch = api::get_json(base_url, &search_path(&text))?;
-    hearthsound_plugin::debug!(
+    let search: musicbrainz::RecordingSearch =
+        api::get_json(base_url, &paths::recording_search_path(&text))?;
+    debug!(
         "recording search matched {:?} recordings, reading {}",
         search.count,
         search.recordings.len()
@@ -447,24 +452,26 @@ fn search_matches(
 ///
 /// # Returns
 ///
-/// The id of the group's earliest official release, as [`earliest_browsed`]
-/// collects the group's pages and [`earliest`] picks the release.
+/// The id of the group's earliest official release, as [`select::earliest_browsed`]
+/// collects the group's pages and [`select::earliest`] picks the release.
 ///
 /// # Errors
 ///
 /// Returns [`ProviderError::NotFound`] when the group has no official release
 /// and when the web service does not know the group, and the provider error of
 /// the request otherwise.
-fn earliest_official_release(base_url: &str, release_group: &str) -> Result<String, ProviderError> {
-    let browsed = earliest_browsed(|offset| {
-        api::get_json(base_url, &release_group_path(release_group, offset))
+pub fn earliest_official_release(
+    base_url: &str,
+    release_group: &str,
+) -> Result<String, ProviderError> {
+    let browsed = select::earliest_browsed(|offset| {
+        api::get_json(base_url, &paths::release_group_path(release_group, offset))
     })?;
 
     if browsed.capped {
-        hearthsound_plugin::debug!(
+        debug!(
             "release browse stopped at the page cap: {} pages, {} releases read",
-            browsed.pages,
-            browsed.releases
+            browsed.pages, browsed.releases
         );
     }
 
@@ -472,114 +479,6 @@ fn earliest_official_release(base_url: &str, release_group: &str) -> Result<Stri
         .earliest
         .map(|release| release.id)
         .ok_or(ProviderError::NotFound)
-}
-
-/// What reading the browse pages of a release group found.
-#[derive(Debug, Default)]
-struct Browsed {
-    /// The earliest release of the pages read.
-    earliest: Option<musicbrainz::ReleaseStub>,
-    /// Number of pages read.
-    pages: u32,
-    /// Number of releases the pages held.
-    releases: usize,
-    /// Whether [`EARLIEST_RELEASE_PAGES`] stopped the scan of a group that had
-    /// more releases.
-    capped: bool,
-}
-
-/// Reads the browse pages of a release group and picks the earliest release.
-///
-/// The web service does not order a browse by date, so the earliest release is
-/// the minimum over the whole group rather than over the first page. The group
-/// is read page by page until the page count the browse reports is reached, an
-/// empty page arrives, or [`EARLIEST_RELEASE_PAGES`] pages were read; a group
-/// past that cap is scanned on its first pages and the result reports that the
-/// cap stopped the scan.
-///
-/// # Parameters
-///
-/// - `fetch`: reads the browse page at an offset into the group.
-///
-/// # Returns
-///
-/// What the pages held: the earliest release as [`earliest`] picks it, or
-/// `None` when the group has no release.
-///
-/// # Errors
-///
-/// Returns the provider error of the page that failed.
-fn earliest_browsed(
-    mut fetch: impl FnMut(u32) -> Result<musicbrainz::ReleaseBrowse, ProviderError>,
-) -> Result<Browsed, ProviderError> {
-    let mut collected: Vec<musicbrainz::ReleaseStub> = Vec::new();
-    let mut offset = 0;
-    let mut pages = 0;
-    let mut complete = false;
-
-    while !complete && pages < EARLIEST_RELEASE_PAGES {
-        let browse = fetch(offset)?;
-        pages += 1;
-
-        let returned = browse.releases.len() as u32;
-        complete = match browse.release_count {
-            Some(count) => collected.len() as u32 + returned >= count || returned == 0,
-            None => true,
-        };
-        offset = browse.release_offset.unwrap_or(offset) + returned;
-        collected.extend(browse.releases);
-    }
-
-    Ok(Browsed {
-        earliest: earliest(&collected).cloned(),
-        pages,
-        releases: collected.len(),
-        capped: !complete,
-    })
-}
-
-/// Picks the earliest release of a browse result.
-///
-/// The release of a group that came first is the one the web service lists
-/// first, so a date only becomes the deciding factor when there is one. A
-/// release the web service left undated sorts after every dated one, because an
-/// unknown date cannot be shown to be early.
-///
-/// # Parameters
-///
-/// - `releases`: the releases of a browse page.
-///
-/// # Returns
-///
-/// The earliest release, or `None` when the page is empty.
-///
-/// # Example
-///
-/// ```text
-/// earliest(&[dated("2002"), dated("1998-04-20"), dated("1998-09-22")])
-///   -> the release dated "1998-04-20"
-/// ```
-fn earliest(releases: &[musicbrainz::ReleaseStub]) -> Option<&musicbrainz::ReleaseStub> {
-    releases
-        .iter()
-        .min_by_key(|release| date_key(release.date.as_deref()))
-}
-
-/// Builds the sort key of a release date.
-///
-/// # Parameters
-///
-/// - `date`: the release date, in the partial form the web service uses.
-///
-/// # Returns
-///
-/// A pair that orders partial ISO dates chronologically and pushes an absent or
-/// empty date behind every real one.
-fn date_key(date: Option<&str>) -> (bool, &str) {
-    match date {
-        Some(date) if !date.is_empty() => (false, date),
-        _ => (true, ""),
-    }
 }
 
 /// Sorts matches by score, best first.
@@ -630,8 +529,9 @@ fn artist_mbid(
         return Ok(None);
     }
 
-    let search: musicbrainz::ArtistSearch = api::get_json(base_url, &artist_search_path(name))?;
-    hearthsound_plugin::debug!(
+    let search: musicbrainz::ArtistSearch =
+        api::get_json(base_url, &paths::artist_search_path(name))?;
+    debug!(
         "artist search matched {:?} artists, reading {}",
         search.count,
         search.artists.len()
@@ -673,185 +573,9 @@ fn searched_artist(artists: &[musicbrainz::ArtistStub], name: &str) -> Option<St
         .map(|artist| artist.id.clone())
 }
 
-/// Builds the path of an artist lookup.
-///
-/// # Parameters
-///
-/// - `mbid`: MusicBrainz artist id.
-///
-/// # Returns
-///
-/// The path, with the url relations requested and the JSON format.
-fn artist_path(mbid: &str) -> String {
-    format!(
-        "artist/{}?inc=url-rels&fmt=json",
-        url::encode_component(mbid)
-    )
-}
-
-/// Builds the path of an artist search.
-///
-/// # Parameters
-///
-/// - `name`: the artist name, unencoded.
-///
-/// # Returns
-///
-/// The path, with the query encoded and the result page bounded by
-/// [`ARTIST_SEARCH_LIMIT`].
-fn artist_search_path(name: &str) -> String {
-    let text = format!("artist:\"{}\"", query::escape_lucene(name));
-
-    format!(
-        "artist?query={}&limit={}&fmt=json",
-        url::encode_component(&text),
-        ARTIST_SEARCH_LIMIT
-    )
-}
-
-/// Builds the path of an ISRC lookup.
-///
-/// The web service keys recordings by the bare 12-character code.
-///
-/// # Parameters
-///
-/// - `isrc`: the normalized ISRC.
-///
-/// # Returns
-///
-/// The path, with the requested inclusions and the JSON format.
-fn isrc_path(isrc: &str) -> String {
-    format!(
-        "isrc/{}?inc=artist-credits+releases&fmt=json",
-        url::encode_component(isrc)
-    )
-}
-
-/// Builds the path of a recording lookup.
-///
-/// The inclusions are the ones a recording hit needs beyond what an ISRC lookup
-/// returns: its releases, their release groups, and its ISRCs.
-///
-/// # Parameters
-///
-/// - `mbid`: MusicBrainz recording id.
-///
-/// # Returns
-///
-/// The path, with the requested inclusions and the JSON format.
-fn recording_path(mbid: &str) -> String {
-    format!(
-        "recording/{}?inc=releases+release-groups+isrcs&fmt=json",
-        url::encode_component(mbid)
-    )
-}
-
-/// Builds the path of a recording search.
-///
-/// # Parameters
-///
-/// - `text`: the Lucene query, unencoded.
-///
-/// # Returns
-///
-/// The path, with the query encoded and the result page bounded by
-/// [`query::SEARCH_LIMIT`].
-fn search_path(text: &str) -> String {
-    format!(
-        "recording?query={}&fmt=json&limit={}",
-        url::encode_component(text),
-        query::SEARCH_LIMIT
-    )
-}
-
-/// Builds the path of a release lookup.
-///
-/// # Parameters
-///
-/// - `mbid`: MusicBrainz release id.
-///
-/// # Returns
-///
-/// The path, with the inclusions a materialized album needs: the recordings of
-/// every track with their ISRCs and artist credits, and the release group with
-/// the genres of both entities.
-fn release_path(mbid: &str) -> String {
-    format!(
-        "release/{}?inc=recordings+artist-credits+isrcs+release-groups+genres&fmt=json",
-        url::encode_component(mbid)
-    )
-}
-
-/// Builds the path of a page of a release group's official releases.
-///
-/// # Parameters
-///
-/// - `mbid`: MusicBrainz release group id.
-/// - `offset`: number of releases of the group to skip, which selects the page.
-///
-/// # Returns
-///
-/// The path, with the status filter, the page size and the offset.
-fn release_group_path(mbid: &str, offset: u32) -> String {
-    format!(
-        "release?release-group={}&status=official&fmt=json&limit={}&offset={}",
-        url::encode_component(mbid),
-        RELEASE_LIMIT,
-        offset
-    )
-}
-
-/// Builds the path of the health probe.
-///
-/// # Returns
-///
-/// The path of the genre listing, bounded to a single row.
-fn health_path() -> String {
-    "genre/all?fmt=json&limit=1".to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn releases_of_a_group() -> Vec<musicbrainz::ReleaseStub> {
-        let browse: musicbrainz::ReleaseBrowse =
-            serde_json::from_str(include_str!("fixtures/releases_by_group.json")).unwrap();
-
-        browse.releases
-    }
-
-    /// Builds a release of a browse page.
-    fn release(id: &str, date: Option<&str>) -> musicbrainz::ReleaseStub {
-        musicbrainz::ReleaseStub {
-            id: id.to_string(),
-            title: "Album".to_string(),
-            date: date.map(str::to_string),
-            track_count: None,
-            release_group: None,
-        }
-    }
-
-    /// Builds a browse page of `ids`, all dated `date`.
-    fn browse_page(
-        ids: Vec<String>,
-        date: &str,
-        count: u32,
-        offset: u32,
-    ) -> musicbrainz::ReleaseBrowse {
-        musicbrainz::ReleaseBrowse {
-            releases: ids.iter().map(|id| release(id, Some(date))).collect(),
-            release_count: Some(count),
-            release_offset: Some(offset),
-        }
-    }
-
-    /// Builds `count` release ids numbered from `prefix`.
-    fn ids(prefix: &str, count: usize) -> Vec<String> {
-        (0..count)
-            .map(|index| format!("{prefix}-{index}"))
-            .collect()
-    }
 
     /// Builds an ISRC lookup hit carrying `releases` releases.
     fn recording(id: &str, releases: usize) -> musicbrainz::Recording {
@@ -862,7 +586,18 @@ mod tests {
             isrcs: Vec::new(),
             artist_credit: Vec::new(),
             releases: (0..releases)
-                .map(|index| release(&format!("release-{index}"), None))
+                .map(|index| musicbrainz::ReleaseStub {
+                    id: format!("release-{index}"),
+                    title: "Album".to_string(),
+                    date: None,
+                    status: None,
+                    barcode: None,
+                    disambiguation: None,
+                    track_count: None,
+                    artist_credit: Vec::new(),
+                    media: Vec::new(),
+                    release_group: None,
+                })
                 .collect(),
             score: None,
         }
@@ -870,22 +605,6 @@ mod tests {
 
     fn artist_search() -> musicbrainz::ArtistSearch {
         serde_json::from_str(include_str!("fixtures/artist_search.json")).unwrap()
-    }
-
-    #[test]
-    fn an_isrc_lookup_asks_for_the_credits_and_releases() {
-        assert_eq!(
-            isrc_path("GBBPW9800010"),
-            "isrc/GBBPW9800010?inc=artist-credits+releases&fmt=json"
-        );
-    }
-
-    #[test]
-    fn a_recording_lookup_asks_for_releases_and_isrcs() {
-        assert_eq!(
-            recording_path("b061ba14-6b3b-4739-a043-dd4685357af4"),
-            "recording/b061ba14-6b3b-4739-a043-dd4685357af4?inc=releases+release-groups+isrcs&fmt=json"
-        );
     }
 
     #[test]
@@ -962,58 +681,6 @@ mod tests {
     }
 
     #[test]
-    fn a_search_encodes_the_query_and_bounds_the_page() {
-        let text = query::recording_query("Roygbiv", &["Boards of Canada".to_string()], None, None)
-            .unwrap();
-
-        assert_eq!(
-            search_path(&text),
-            "recording?query=recording%3A%22Roygbiv%22%20AND%20artist%3A%22Boards%20of%20Canada%22&fmt=json&limit=10"
-        );
-    }
-
-    #[test]
-    fn a_release_lookup_asks_for_recordings_credits_isrcs_and_genres() {
-        assert_eq!(
-            release_path("6360f948-17d1-4135-a580-34dc200930d8"),
-            "release/6360f948-17d1-4135-a580-34dc200930d8?inc=recordings+artist-credits+isrcs+release-groups+genres&fmt=json"
-        );
-    }
-
-    #[test]
-    fn a_release_group_browse_filters_to_official_releases() {
-        assert_eq!(
-            release_group_path("17d74d52-c92b-3b8d-9f87-218ab2d1c4a0", 0),
-            "release?release-group=17d74d52-c92b-3b8d-9f87-218ab2d1c4a0&status=official&fmt=json&limit=100&offset=0"
-        );
-        assert_eq!(
-            release_group_path("17d74d52-c92b-3b8d-9f87-218ab2d1c4a0", 100),
-            "release?release-group=17d74d52-c92b-3b8d-9f87-218ab2d1c4a0&status=official&fmt=json&limit=100&offset=100"
-        );
-    }
-
-    #[test]
-    fn the_health_probe_reads_one_genre() {
-        assert_eq!(health_path(), "genre/all?fmt=json&limit=1");
-    }
-
-    #[test]
-    fn an_artist_lookup_asks_for_the_url_relations() {
-        assert_eq!(
-            artist_path("d1f2e3a4-5b6c-4d7e-8f90-1a2b3c4d5e6f"),
-            "artist/d1f2e3a4-5b6c-4d7e-8f90-1a2b3c4d5e6f?inc=url-rels&fmt=json"
-        );
-    }
-
-    #[test]
-    fn an_artist_search_encodes_the_name_and_bounds_the_page() {
-        assert_eq!(
-            artist_search_path("Boards of Canada"),
-            "artist?query=artist%3A%22Boards%20of%20Canada%22&limit=5&fmt=json"
-        );
-    }
-
-    #[test]
     fn an_artist_named_by_id_is_not_searched_for() {
         let request = ArtistInfoRequest {
             name: "Northlight".to_string(),
@@ -1061,118 +728,6 @@ mod tests {
 
         assert_eq!(searched_artist(&search.artists, "Northlight Quintet"), None);
         assert_eq!(searched_artist(&[], "Northlight"), None);
-    }
-
-    #[test]
-    fn the_earliest_release_of_a_group_wins() {
-        let releases = releases_of_a_group();
-        let picked = earliest(&releases).unwrap();
-
-        // The fixture's official releases start with 1998-09-22, 1998-04-20 and
-        // 2002-02-13.
-        assert_eq!(picked.id, "1a8207d9-75fa-44d7-9a83-04801b0619f3");
-        assert_eq!(picked.date.as_deref(), Some("1998-04-20"));
-    }
-
-    #[test]
-    fn a_group_that_fits_one_page_costs_one_request() {
-        let mut requests = 0;
-
-        let browsed = earliest_browsed(|offset| {
-            requests += 1;
-            Ok(browse_page(ids("release", 100), "2005-03-01", 100, offset))
-        })
-        .unwrap();
-
-        assert_eq!(requests, 1);
-        assert_eq!(browsed.pages, 1);
-        assert_eq!(browsed.releases, 100);
-        assert!(!browsed.capped);
-        assert_eq!(
-            browsed.earliest.as_ref().map(|release| release.id.as_str()),
-            Some("release-0")
-        );
-    }
-
-    #[test]
-    fn the_earliest_release_is_picked_across_the_pages_of_a_group() {
-        let mut requests = 0;
-
-        // The first page holds releases from 2005 and the second a 1998 one
-        // dated before them: a scan that stops after the first page dates the
-        // group 2005.
-        let browsed = earliest_browsed(|offset| {
-            requests += 1;
-            Ok(if offset == 0 {
-                browse_page(ids("first", 100), "2005-03-01", 120, 0)
-            } else {
-                let mut second = browse_page(ids("second", 19), "2005-06-01", 120, 100);
-                second
-                    .releases
-                    .push(release("earliest", Some("1998-04-20")));
-                second
-            })
-        })
-        .unwrap();
-
-        assert_eq!(requests, 2);
-        assert_eq!(browsed.releases, 120);
-        assert!(!browsed.capped);
-        assert_eq!(
-            browsed.earliest.as_ref().map(|release| release.id.as_str()),
-            Some("earliest")
-        );
-    }
-
-    #[test]
-    fn the_page_cap_stops_the_scan_of_a_group_with_more_releases() {
-        let mut requests = 0;
-
-        let browsed = earliest_browsed(|offset| {
-            requests += 1;
-            Ok(browse_page(
-                ids(&format!("page-{offset}"), 100),
-                "2005-03-01",
-                1_000,
-                offset,
-            ))
-        })
-        .unwrap();
-
-        assert_eq!(requests, EARLIEST_RELEASE_PAGES);
-        assert_eq!(browsed.pages, EARLIEST_RELEASE_PAGES);
-        assert_eq!(browsed.releases, 500);
-        assert!(browsed.capped);
-        assert_eq!(
-            browsed.earliest.as_ref().map(|release| release.id.as_str()),
-            Some("page-0-0")
-        );
-    }
-
-    #[test]
-    fn an_undated_release_sorts_after_a_dated_one() {
-        let undated = musicbrainz::ReleaseStub {
-            id: "0f598088-e9e6-4733-aee5-d3c3316a1f3b".to_string(),
-            title: "The Wall".to_string(),
-            date: None,
-            track_count: None,
-            release_group: None,
-        };
-        let empty = musicbrainz::ReleaseStub {
-            date: Some(String::new()),
-            ..undated.clone()
-        };
-        let dated = musicbrainz::ReleaseStub {
-            id: "9e6886e7-b1bb-484d-b152-fe7d90c3e973".to_string(),
-            date: Some("1979".to_string()),
-            ..undated.clone()
-        };
-
-        let page = [undated, empty, dated];
-        let picked = earliest(&page).unwrap();
-
-        assert_eq!(picked.id, "9e6886e7-b1bb-484d-b152-fe7d90c3e973");
-        assert_eq!(earliest(&[]).map(|release| &release.id), None);
     }
 
     #[test]
