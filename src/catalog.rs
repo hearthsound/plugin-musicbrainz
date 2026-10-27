@@ -18,6 +18,7 @@ use std::collections::BTreeSet;
 use hearthsound_plugin::catalog_metadata_artwork_provider::exports::hearthsound::plugin::catalog::{
     SearchQuery, SearchResults,
 };
+use hearthsound_plugin::host::http;
 use hearthsound_plugin::types::{
     Album, AlbumRef, Artist, EntityKind, IdPair, ProviderError, Track,
 };
@@ -404,21 +405,31 @@ pub fn artist_albums(
 
 /// Reads the most played recordings of an artist.
 ///
+/// ListenBrainz answers the popularity endpoint only for a request that
+/// carries the token of an account, so an instance without one reports no top
+/// tracks rather than a failure: the artist's other data is still worth
+/// answering, and a token is an administrator's decision.
+///
 /// # Parameters
 ///
 /// - `id`: MusicBrainz artist id.
 /// - `limit`: number of tracks to answer.
+/// - `token`: the ListenBrainz token of the instance, empty when it has none.
 ///
 /// # Returns
 ///
 /// The tracks ListenBrainz ranks highest for the artist, in its order, sliced to
-/// `limit`. A zero limit answers nothing without a request.
+/// `limit`. A zero limit, and an instance without a token, answer nothing
+/// without a request.
 ///
 /// # Errors
 ///
-/// Returns the provider error of the request.
-pub fn artist_top_tracks(id: &str, limit: u32) -> Result<Vec<Track>, ProviderError> {
-    if limit == 0 {
+/// Returns the provider error of the request, including
+/// [`ProviderError::Unauthorized`] when ListenBrainz refuses the token.
+pub fn artist_top_tracks(id: &str, limit: u32, token: &str) -> Result<Vec<Track>, ProviderError> {
+    if limit == 0 || token.is_empty() {
+        debug!("no popularity list: no token or no room to answer one");
+
         return Ok(Vec::new());
     }
 
@@ -426,7 +437,8 @@ pub fn artist_top_tracks(id: &str, limit: u32) -> Result<Vec<Track>, ProviderErr
         url::LISTENBRAINZ_BASE_URL,
         &paths::listenbrainz_top_recordings_path(id),
     );
-    let entries: Vec<listenbrainz::RecordingPopularity> = api::get_json_at(&endpoint)?;
+    let entries: Vec<listenbrainz::RecordingPopularity> =
+        api::send_json(popularity_request(&endpoint, token))?;
     debug!("popularity list held {} recordings", entries.len());
 
     Ok(entries
@@ -434,6 +446,36 @@ pub fn artist_top_tracks(id: &str, limit: u32) -> Result<Vec<Track>, ProviderErr
         .take(usize::try_from(limit).unwrap_or(usize::MAX))
         .map(map::popularity_track)
         .collect())
+}
+
+/// Builds the popularity request of an artist.
+///
+/// The token travels in the `Authorization` header ListenBrainz documents for
+/// its own clients, spelled `Token <token>`, so the account the token belongs to
+/// is the one the popularity is counted for.
+///
+/// # Parameters
+///
+/// - `endpoint`: absolute URL of the artist's popularity list.
+/// - `token`: the ListenBrainz token, never empty.
+///
+/// # Returns
+///
+/// The request, ready to send.
+///
+/// # Example
+///
+/// ```text
+/// popularity_request("https://api.listenbrainz.org/1/popularity/top-recordings-for-artist/<mbid>", "abc")
+///   -> GET with `authorization: Token abc`
+/// ```
+fn popularity_request(endpoint: &str, token: &str) -> http::Request {
+    let mut request = api::request(endpoint);
+    request
+        .headers
+        .push(("authorization".to_string(), format!("Token {token}")));
+
+    request
 }
 
 /// Resolves one ISRC to its tracks.
@@ -726,10 +768,48 @@ mod tests {
             .is_empty()
         );
         assert!(
-            artist_top_tracks("69158f97-4c07-4c4e-baf8-4e4ab1ed666e", 0)
+            artist_top_tracks("69158f97-4c07-4c4e-baf8-4e4ab1ed666e", 0, "token")
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn a_popularity_request_carries_the_configured_token() {
+        let entries: Vec<listenbrainz::RecordingPopularity> =
+            serde_json::from_str(include_str!("fixtures/artist_popularity.json")).unwrap();
+        assert_eq!(entries.len(), 2, "the fixture holds the popularity list");
+
+        let endpoint = url::endpoint(
+            url::LISTENBRAINZ_BASE_URL,
+            &paths::listenbrainz_top_recordings_path("69158f97-4c07-4c4e-baf8-4e4ab1ed666e"),
+        );
+        let request = popularity_request(&endpoint, "listener-token");
+
+        assert_eq!(request.method, "GET");
+        assert_eq!(
+            request.url,
+            "https://api.listenbrainz.org/1/popularity/top-recordings-for-artist/69158f97-4c07-4c4e-baf8-4e4ab1ed666e"
+        );
+        assert_eq!(
+            request.headers,
+            vec![(
+                "authorization".to_string(),
+                "Token listener-token".to_string()
+            )]
+        );
+        assert_eq!(request.body, None);
+        assert!(request.timeout_ms.is_some(), "the budget is set");
+    }
+
+    #[test]
+    fn an_instance_without_a_token_answers_no_top_tracks() {
+        // No request is made: the host's HTTP import does not exist on this
+        // target and aborts the process when it is called, so the empty answer
+        // proves the call stops before it sends anything.
+        let tracks = artist_top_tracks("69158f97-4c07-4c4e-baf8-4e4ab1ed666e", 100, "").unwrap();
+
+        assert!(tracks.is_empty());
     }
 
     #[test]

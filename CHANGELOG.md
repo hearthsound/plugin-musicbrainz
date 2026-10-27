@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-27
+
+### Added
+
+- The `listenbrainzToken` instance setting: the popularity API that names an
+  artist's top tracks answers only for an account, so `artist-top-tracks` sends
+  the token in an `Authorization: Token <token>` header and reports a refusal as
+  `Unauthorized`. An instance without a token omits top tracks instead of
+  failing, because the artist's other data is still worth answering.
+
+### Changed
+
+- `artist-top-tracks` stops before it sends a request when the instance has no
+  token or the caller asks for no tracks.
+
 ## [0.5.0] - 2026-10-27
 
 ### Added
@@ -108,7 +123,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A CI workflow that formats, lints, tests, builds, checks and packs the
   plugin, and uploads the archive.
 
-[Unreleased]: https://github.com/hearthsound/plugin-musicbrainz/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/hearthsound/plugin-musicbrainz/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/hearthsound/plugin-musicbrainz/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/hearthsound/plugin-musicbrainz/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/hearthsound/plugin-musicbrainz/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/hearthsound/plugin-musicbrainz/compare/v0.2.0...v0.3.0

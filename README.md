@@ -46,7 +46,7 @@ Then validate the manifest and the component:
 hsplugin check
 ```
 
-It prints `ok: app.hearthsound.musicbrainz 0.5.0 (provides catalog, metadata,
+It prints `ok: app.hearthsound.musicbrainz 0.5.1 (provides catalog, metadata,
 artwork)` on success.
 
 Finally, build the archive you install on a server:
@@ -55,7 +55,7 @@ Finally, build the archive you install on a server:
 hsplugin pack --out-dir dist
 ```
 
-`dist/app.hearthsound.musicbrainz-0.5.0.hsplugin` contains the manifest and the
+`dist/app.hearthsound.musicbrainz-0.5.1.hsplugin` contains the manifest and the
 component.
 
 ## Tests
@@ -74,10 +74,13 @@ cargo test
 | `baseUrl` | `https://musicbrainz.org/ws/2/` | Base URL of the MusicBrainz web service. Point it at a mirror to keep traffic off `musicbrainz.org`. |
 | `artworkBaseUrl` | `https://coverartarchive.org/` | Base URL of the Cover Art Archive. Point it at a mirror to keep traffic off `coverartarchive.org`. |
 | `wikipediaLanguage` | `en` | Language code of the Wikipedia edition artist biographies are read from, for example `de` or `pt`. |
+| `listenbrainzToken` | empty | Token of a ListenBrainz account, sent as `Authorization: Token <token>` when the artist's top tracks are read. Without one the plugin omits top tracks. |
 
 A base URL that does not end in a slash is normalized to one, so the endpoint
 paths the plugin appends always land on the service root. A language code must
-be two or three lowercase letters.
+be two or three lowercase letters. The ListenBrainz token is stored with the
+instance's secrets, is never read back by the server, and may not contain a
+control character, which no header value may.
 
 The manifest grants the plugin `musicbrainz.org`, the Cover Art Archive,
 `archive.org`, Wikidata, any Wikipedia edition, Wikimedia Commons,
@@ -125,7 +128,10 @@ the next `get-artist` reports it.
 `artist-top-tracks` reads the artist's most played recordings from
 `GET https://api.listenbrainz.org/1/popularity/top-recordings-for-artist/{mbid}`
 and slices the list to the caller's limit. A recording ListenBrainz does not tie
-to a release is reported without an album.
+to a release is reported without an album. That endpoint answers only for a
+ListenBrainz account, so the request carries `Authorization: Token <token>` from
+the instance's `listenbrainzToken`; an instance without a token reports no top
+tracks rather than an error, and a refused token is reported as `Unauthorized`.
 
 `lookup-isrc` resolves an ISRC to the recordings assigned to it, and
 `lookup-album` resolves canonical ids to the albums the web service holds: an
@@ -252,6 +258,8 @@ reported.
   the smallest request the web service serves.
 - A hint without a title is not searchable and resolves to no matches; that is
   an empty result, not an error.
+- An instance without a `listenbrainzToken` reports no top tracks instead of a
+  failure, because ListenBrainz's popularity API answers only for an account.
 - The module-level log macros are no-ops on the host target, which has no
   `host-log` import, so the unit tests exercise the same code the component runs.
 

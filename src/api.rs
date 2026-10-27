@@ -17,7 +17,7 @@
 
 use serde::de::DeserializeOwned;
 
-use hearthsound_plugin::host::http::Response;
+use hearthsound_plugin::host::http::{Request, Response};
 use hearthsound_plugin::http;
 use hearthsound_plugin::types::ProviderError;
 
@@ -84,12 +84,49 @@ pub(crate) fn get_json<T: DeserializeOwned>(
 ///
 /// Returns the same errors as [`get_json`].
 pub(crate) fn get_json_at<T: DeserializeOwned>(endpoint: &str) -> Result<T, ProviderError> {
+    send_json(request(endpoint))
+}
+
+/// Builds the GET request of one endpoint without sending it.
+///
+/// A caller that has to label its request - the ListenBrainz popularity API
+/// wants an `Authorization` header - adds the headers to the returned request
+/// and sends it with [`send_json`].
+///
+/// # Parameters
+///
+/// - `endpoint`: the absolute URL of the endpoint, already query-encoded.
+///
+/// # Returns
+///
+/// The request, carrying the plugin's request timeout and no headers.
+pub(crate) fn request(endpoint: &str) -> Request {
     let mut request = http::get(endpoint);
     request.timeout_ms = Some(REQUEST_TIMEOUT_MS);
 
+    request
+}
+
+/// Sends one prepared request and decodes the JSON body.
+///
+/// # Parameters
+///
+/// - `request`: the request to perform.
+///
+/// # Returns
+///
+/// The decoded response body.
+///
+/// # Errors
+///
+/// Returns the [`status_error`] of a non-`2xx` response,
+/// [`ProviderError::Unavailable`] when the host cannot perform the request at
+/// all, and [`ProviderError::Internal`] when the body is not JSON for `T`.
+pub(crate) fn send_json<T: DeserializeOwned>(request: Request) -> Result<T, ProviderError> {
+    let endpoint = request.url.clone();
     let response = http::send(&request)?;
 
-    decode(&response, endpoint)
+    decode(&response, &endpoint)
 }
 
 /// Decodes one web service response.
